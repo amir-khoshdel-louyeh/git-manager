@@ -28,6 +28,37 @@ detect_base_branch() {
     echo main
 }
 
+# Ensure a local 'main' branch exists without switching branches.
+# Strategy:
+# 1) If local 'main' exists: do nothing
+# 2) Else if local 'master' exists: create 'main' from 'master'
+# 3) Else if remote 'origin/main' exists: create 'main' from 'origin/main'
+# 4) Else if remote 'origin/master' exists: create 'main' from 'origin/master'
+# 5) Else: create 'main' from current HEAD
+ensure_main_branch() {
+    if git show-ref --verify --quiet refs/heads/main; then
+        return 0
+    fi
+
+    if git show-ref --verify --quiet refs/heads/master; then
+        git branch main master >/dev/null 2>&1 || true
+        return 0
+    fi
+
+    if git show-ref --verify --quiet refs/remotes/origin/main; then
+        git branch main origin/main >/dev/null 2>&1 || true
+        return 0
+    fi
+
+    if git show-ref --verify --quiet refs/remotes/origin/master; then
+        git branch main origin/master >/dev/null 2>&1 || true
+        return 0
+    fi
+
+    # Fallback to HEAD
+    git branch main >/dev/null 2>&1 || true
+}
+
 # Determine base directory containing all repositories
 # Priority: first CLI arg -> env BASE_DIR -> default path
 BASE_DIR="${1:-${BASE_DIR:-/home/amir/GitHub}}"
@@ -62,6 +93,9 @@ scan_and_show() {
     for repo in */; do
         if [ -d "$repo/.git" ]; then
             cd "$repo" || error_exit "Cannot enter directory $repo"
+
+            # Ensure 'main' exists so commit counting against base is reliable
+            ensure_main_branch
 
             LOCAL_EXISTS="no"
             COUNT=0
