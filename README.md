@@ -6,6 +6,8 @@ A small interactive Bash tool to manage multiple Git repositories under a single
 - Preview commits pending on `local_commit` relative to the base branch
 - Move N commits from `local_commit` onto the base branch (oldest → newest), rewrite timestamps to “now”, and push
 
+> New: The tool now guarantees a local `main` branch exists per repo to ensure accurate commit counting for `local_commit`.
+
 ## Requirements
 - Linux/macOS shell with Bash
 - Git installed and available on `PATH`
@@ -47,13 +49,24 @@ Then, for a selected repo, you’ll get this menu:
 4) Back to list
 
 ## Base Branch Detection
-The base branch is chosen per-repo as follows:
-1. Local `main` if present, else
-2. Local `master` if present, else
-3. `origin/HEAD` if it points to a real branch, else
-4. `main`
+The base branch is chosen per repo and ensured to exist locally:
 
-`HEAD` is never shown as a base; the script falls back gracefully.
+1. Ensure local `main` exists (non-destructive):
+  - If local `main` exists: keep it
+  - Else if local `master` exists: create `main` from `master`
+  - Else if `origin/main` exists: create `main` from `origin/main`
+  - Else if `origin/master` exists: create `main` from `origin/master`
+  - Else: create `main` from `HEAD`
+
+2. Detect base branch for operations:
+  - Prefer local `main`
+  - Else local `master`
+  - Else `origin/HEAD` if it points to a real branch
+  - Else fallback to `main`
+
+Notes:
+- Ensuring `main` does not switch your current branch and does not modify remote defaults.
+- This guarantees `base..local_commit` comparisons won’t show 0 due to a missing base.
 
 ## “Move N” Details (Option 3)
 - Recomputes pending count: `git rev-list --count base..local_commit`
@@ -79,9 +92,18 @@ Conflict behavior:
   ```bash
   git remote set-head origin -a
   ```
+ - If your remote default branch is not `main` and you want to align it:
+   ```bash
+   git remote set-head origin main
+   ```
+   Or detect automatically:
+   ```bash
+   git remote set-head origin -a
+   ```
 
 ## Troubleshooting
 - “Base branch not found”: ensure `main`/`master` exists locally or on origin.
+- “Commit count on `local_commit` shows 0”: check that `main` was created; re-run the tool to ensure `main` is present.
 - “No commits to move”: nothing ahead on `local_commit` relative to base.
 - “Working tree not clean”: commit or stash your changes.
 
