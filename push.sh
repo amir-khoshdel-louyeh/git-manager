@@ -6,7 +6,8 @@ error_exit() {
     exit 1
 }
 
-NOW=$(date "+%Y-%m-%d %H:%M:%S")
+# Capture timestamp with explicit timezone to avoid date-day ambiguity
+NOW=$(date "+%Y-%m-%d %H:%M:%S %z")
 
 # Detect default base branch for current repo (prefers local main/master, falls back to origin/HEAD if it points to a real branch)
 detect_base_branch() {
@@ -236,8 +237,44 @@ repo_menu() {
                         error_exit "Cherry-pick failed for commit $COMMIT"
                     fi
                 }
-                GIT_AUTHOR_DATE="$NOW" GIT_COMMITTER_DATE="$NOW" git commit --amend --no-edit || true
+                # Explicitly set both author and committer dates, reset author to local config to ensure attribution
+                GIT_AUTHOR_DATE="$NOW" GIT_COMMITTER_DATE="$NOW" git commit --amend --no-edit --date "$NOW" --reset-author || true
+                # Show confirmation of updated author date for the just-amended commit
+                git show -s --date=iso --pretty=format:'  ✔ %h  %ad  %s'
             done
+            echo "📜 Latest moved commits on $BASE_BRANCH (author dates shown):"
+            git log -n "$NUM" --no-decorate --date=iso --pretty=format:'  %h  %ad  %s'
+            # ===== Pre-push validation =====
+            # 1) Ensure remote default branch matches target base branch
+            DEFAULT_REMOTE_HEAD=$(git remote show origin 2>/dev/null | sed -n 's/.*HEAD branch: \(.*\)$/\1/p')
+            if [ -n "$DEFAULT_REMOTE_HEAD" ] && [ "$DEFAULT_REMOTE_HEAD" != "$BASE_BRANCH" ]; then
+                error_exit "Remote default branch is '$DEFAULT_REMOTE_HEAD', but you're pushing to '$BASE_BRANCH'. Set the repo default branch correctly or switch base."
+            fi
+            # 2) Ensure author date day equals today's day for all moved commits
+            TODAY=$(date "+%Y-%m-%d")
+            BAD_DATE_COUNT=0
+            while IFS= read -r AD; do
+                if [ "$AD" != "$TODAY" ]; then
+                    BAD_DATE_COUNT=$((BAD_DATE_COUNT+1))
+                fi
+            done < <(git log -n "$NUM" --date=short --pretty=format:'%ad')
+            if [ "$BAD_DATE_COUNT" -gt 0 ]; then
+                error_exit "Found $BAD_DATE_COUNT commit(s) with author date not equal to today ($TODAY). Aborting push."
+            fi
+            # 3) Ensure author email matches local git config (so GitHub can attribute contributions)
+            EXPECTED_EMAIL=$(git config user.email || true)
+            if [ -z "${EXPECTED_EMAIL:-}" ]; then
+                error_exit "Git 'user.email' is not set. Configure it (git config user.email you@example.com) before pushing."
+            fi
+            BAD_EMAIL_COUNT=0
+            while IFS= read -r AE; do
+                if [ "$AE" != "$EXPECTED_EMAIL" ]; then
+                    BAD_EMAIL_COUNT=$((BAD_EMAIL_COUNT+1))
+                fi
+            done < <(git log -n "$NUM" --pretty=format:'%ae')
+            if [ "$BAD_EMAIL_COUNT" -gt 0 ]; then
+                error_exit "Found $BAD_EMAIL_COUNT commit(s) with author email not matching '$EXPECTED_EMAIL'. Aborting push."
+            fi
             echo "🚀 Pushing to origin $BASE_BRANCH..."
             git push origin "$BASE_BRANCH" || error_exit "Push failed"
             echo "✅ Done! $NUM commits moved with date/time $NOW."
