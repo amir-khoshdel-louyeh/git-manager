@@ -133,6 +133,8 @@ repo_menu() {
     local BASE_BRANCH="${BASE_MAP[$idx]}"
     local BRANCH="${BRANCH_MAP[$idx]}"
     local LOCAL_EXISTS="${LOCAL_EXISTS_MAP[$idx]}"
+    local STASHED=0
+    local ORIG_BRANCH="$BRANCH"
 
     echo
     echo "ℹ️  $(basename "$REPO") | base: $BASE_BRANCH | current: $BRANCH | local_commit: $LOCAL_EXISTS | commits: $COUNT"
@@ -217,9 +219,20 @@ repo_menu() {
                 return 0
             fi
             if ! git diff --quiet || ! git diff --cached --quiet; then
-                echo "❌ Working tree not clean. Commit or stash changes first."
-                cd .. || error_exit "Cannot return to parent directory"
-                return 0
+                echo "❌ Working tree not clean."
+                echo "  Options:"
+                echo "    s) Stash changes (incl. untracked) and continue"
+                echo "    a) Abort"
+                read -p "Choose [s/a]: " DIRTY_ACTION
+                if [[ "$DIRTY_ACTION" =~ ^[Ss]$ ]]; then
+                    git stash push -u -m "git-manager auto-stash before moving commits ($NOW)" || error_exit "Failed to stash changes"
+                    STASHED=1
+                    echo "✅ Changes stashed. Proceeding..."
+                else
+                    echo "🛑 Aborted. Please commit or stash changes and retry."
+                    cd .. || error_exit "Cannot return to parent directory"
+                    return 0
+                fi
             fi
             COMMITS=$(git rev-list --reverse "$BASE_BRANCH"..local_commit | head -n "$NUM")
             if [ -z "$COMMITS" ]; then
@@ -308,6 +321,16 @@ repo_menu() {
                     git checkout local_commit || error_exit "Cannot checkout local_commit to sync"
                     git reset --hard "$BASE_BRANCH" || error_exit "Failed to reset local_commit to $BASE_BRANCH"
                     echo "✅ local_commit is now aligned with $BASE_BRANCH"
+                fi
+            fi
+            # Restore stashed changes if we stashed earlier
+            if [ "$STASHED" -eq 1 ]; then
+                echo "🔧 Restoring stashed changes to $ORIG_BRANCH..."
+                git checkout "$ORIG_BRANCH" || error_exit "Cannot checkout $ORIG_BRANCH to restore stash"
+                if git stash list | head -n 1 | grep -q "git-manager auto-stash before moving commits"; then
+                    git stash pop || echo "⚠️ Stash pop had conflicts or failed. Resolve manually."
+                else
+                    echo "⚠️ No matching stash found. Check 'git stash list'."
                 fi
             fi
             ;;
