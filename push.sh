@@ -7,7 +7,10 @@ error_exit() {
 }
 
 # Capture timestamp with explicit timezone to avoid date-day ambiguity
-NOW=$(date "+%Y-%m-%d %H:%M:%S %z")
+# Use ISO 8601 format for git commands
+NOW=$(date -u "+%Y-%m-%dT%H:%M:%S%z")
+# Also capture a readable format for display
+NOW_DISPLAY=$(date "+%Y-%m-%d %H:%M:%S %z")
 
 # Detect default base branch for current repo (prefers local main/master, falls back to origin/HEAD if it points to a real branch)
 detect_base_branch() {
@@ -225,7 +228,7 @@ repo_menu() {
                 echo "    a) Abort"
                 read -p "Choose [s/a]: " DIRTY_ACTION
                 if [[ "$DIRTY_ACTION" =~ ^[Ss]$ ]]; then
-                    git stash push -u -m "git-manager auto-stash before moving commits ($NOW)" || error_exit "Failed to stash changes"
+                    git stash push -u -m "git-manager auto-stash before moving commits ($NOW_DISPLAY)" || error_exit "Failed to stash changes"
                     STASHED=1
                     echo "✅ Changes stashed. Proceeding..."
                 else
@@ -240,7 +243,7 @@ repo_menu() {
                 cd .. || error_exit "Cannot return to parent directory"
                 return 0
             fi
-            echo "🕒 Rewriting dates for $NUM commits to $NOW..."
+            echo "🕒 Rewriting dates for $NUM commits to $NOW_DISPLAY..."
             git checkout "$BASE_BRANCH" || error_exit "Cannot checkout $BASE_BRANCH"
             for COMMIT in $COMMITS; do
                 git cherry-pick "$COMMIT" || {
@@ -251,9 +254,9 @@ repo_menu() {
                     fi
                 }
                 # Explicitly set both author and committer dates, reset author to local config to ensure attribution
-                GIT_AUTHOR_DATE="$NOW" GIT_COMMITTER_DATE="$NOW" git commit --amend --no-edit --date "$NOW" --reset-author || true
+                GIT_AUTHOR_DATE="$NOW" GIT_COMMITTER_DATE="$NOW" git commit --amend --no-edit --date "$NOW" --reset-author || error_exit "Failed to amend commit $COMMIT with new dates"
                 # Show confirmation of updated author date for the just-amended commit
-                git show -s --date=iso --pretty=format:'  ✔ %h  %ad  %s'
+                git show -s --date=iso --pretty=format:'  ✔ %h  %ad  %s' || error_exit "Failed to display amended commit"
             done
             echo "📜 Latest moved commits on $BASE_BRANCH (author dates shown):"
             git log -n "$NUM" --no-decorate --date=iso --pretty=format:'  %h  %ad  %s'
