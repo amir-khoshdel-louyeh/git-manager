@@ -302,7 +302,8 @@ repo_menu() {
                 REMAINING_COMMITS=$(echo "$REMAINING_COMMITS" | tail -n +$((NUM+1)))
                 if [ -n "$REMAINING_COMMITS" ]; then
                     echo "⚠️  You moved $NUM of $COUNT commits."
-                    read -p "Do you want to drop those $NUM commits from local_commit (rewrite local history)? [y/N] " CONFIRM
+                    echo "Do you want to drop those $NUM commits from local_commit (rewrite local history)? [y/N]"
+                    CONFIRM="y"
                     if [[ "$CONFIRM" =~ ^[Yy]$ ]]; then
                         echo "🔄 Rewriting local_commit to keep only remaining commits..."
                         git checkout local_commit || error_exit "Cannot checkout local_commit"
