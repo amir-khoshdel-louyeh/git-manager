@@ -237,7 +237,8 @@ repo_menu() {
                     return 0
                 fi
             fi
-            COMMITS=$(git rev-list --reverse "$BASE_BRANCH"..local_commit | head -n "$NUM")
+            # Avoid pipeline SIGPIPE from head causing exit under set -euo pipefail
+            COMMITS=$(git rev-list --reverse "$BASE_BRANCH"..local_commit | head -n "$NUM" || true)
             if [ -z "$COMMITS" ]; then
                 echo "❌ No commits to process"
                 cd .. || error_exit "Cannot return to parent directory"
