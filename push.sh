@@ -263,7 +263,7 @@ repo_menu() {
             git log -n "$NUM" --no-decorate --date=iso --pretty=format:'  %h  %ad  %s'
             # ===== Pre-push validation =====
             # 1) Ensure remote default branch matches target base branch
-            DEFAULT_REMOTE_HEAD=$(git remote show origin 2>/dev/null | sed -n 's/.*HEAD branch: \(.*\)$/\1/p')
+            DEFAULT_REMOTE_HEAD=$(git remote show origin 2>/dev/null | sed -n 's/.*HEAD branch: \(.*\)$/\1/p' || true)
             if [ -n "$DEFAULT_REMOTE_HEAD" ] && [ "$DEFAULT_REMOTE_HEAD" != "$BASE_BRANCH" ]; then
                 error_exit "Remote default branch is '$DEFAULT_REMOTE_HEAD', but you're pushing to '$BASE_BRANCH'. Set the repo default branch correctly or switch base."
             fi
@@ -271,10 +271,10 @@ repo_menu() {
             TODAY=$(date "+%Y-%m-%d")
             BAD_DATE_COUNT=0
             while IFS= read -r AD; do
-                if [ "$AD" != "$TODAY" ]; then
+                if [ -n "$AD" ] && [ "$AD" != "$TODAY" ]; then
                     BAD_DATE_COUNT=$((BAD_DATE_COUNT+1))
                 fi
-            done < <(git log -n "$NUM" --date=short --pretty=format:'%ad')
+            done < <(git log -n "$NUM" --date=short --pretty=format:'%ad' || true)
             if [ "$BAD_DATE_COUNT" -gt 0 ]; then
                 error_exit "Found $BAD_DATE_COUNT commit(s) with author date not equal to today ($TODAY). Aborting push."
             fi
@@ -285,17 +285,17 @@ repo_menu() {
             fi
             BAD_EMAIL_COUNT=0
             while IFS= read -r AE; do
-                if [ "$AE" != "$EXPECTED_EMAIL" ]; then
+                if [ -n "$AE" ] && [ "$AE" != "$EXPECTED_EMAIL" ]; then
                     BAD_EMAIL_COUNT=$((BAD_EMAIL_COUNT+1))
                 fi
-            done < <(git log -n "$NUM" --pretty=format:'%ae')
+            done < <(git log -n "$NUM" --pretty=format:'%ae' || true)
             if [ "$BAD_EMAIL_COUNT" -gt 0 ]; then
                 error_exit "Found $BAD_EMAIL_COUNT commit(s) with author email not matching '$EXPECTED_EMAIL'. Aborting push."
             fi
             echo "🚀 Pushing to origin $BASE_BRANCH..."
             git push origin "$BASE_BRANCH" || error_exit "Push failed"
             echo "✅ Done! $NUM commits moved with date/time $NOW."
-            # Offer to rewrite local_commit queue to drop the moved commits
+            # ===== Clean up local_commit ONLY AFTER successful push =====
             if git show-ref --verify --quiet refs/heads/local_commit; then
                 # Recompute full commit list (oldest → newest)
                 REMAINING_COMMITS=$(git rev-list --reverse "$BASE_BRANCH"..local_commit)
