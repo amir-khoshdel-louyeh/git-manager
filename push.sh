@@ -139,6 +139,25 @@ repo_menu() {
     local STASHED=0
     local ORIG_BRANCH="$BRANCH"
 
+    cd "$REPO" || error_exit "Cannot enter $REPO"
+    
+    # Verify git user is configured (needed for cherry-pick commits)
+    local GIT_USER_NAME=$(git config user.name 2>/dev/null || true)
+    local GIT_USER_EMAIL=$(git config user.email 2>/dev/null || true)
+    if [ -z "$GIT_USER_NAME" ] || [ -z "$GIT_USER_EMAIL" ]; then
+        echo "❌ Git user not configured"
+        echo "   Please configure git identity:"
+        echo "     git config user.name \"Your Name\""
+        echo "     git config user.email \"you@example.com\""
+        if [ -n "$SUDO_USER" ]; then
+            echo "   (Or run without sudo to use your own git config)"
+        fi
+        cd .. || error_exit "Cannot return to parent directory"
+        return 0
+    fi
+
+    cd .. || error_exit "Cannot return to parent directory"
+
     echo
     echo "ℹ️  $(basename "$REPO") | base: $BASE_BRANCH | current: $BRANCH | local_commit: $LOCAL_EXISTS | commits: $COUNT"
     echo "Choose an action:"
@@ -228,6 +247,19 @@ repo_menu() {
                 echo "    a) Abort"
                 read -p "Choose [s/a]: " DIRTY_ACTION
                 if [[ "$DIRTY_ACTION" =~ ^[Ss]$ ]]; then
+                    # Check if there's an ongoing merge/cherry-pick/rebase
+                    if [ -d ".git/MERGE_HEAD" ] || [ -f ".git/MERGE_HEAD" ] || [ -d ".git/CHERRY_PICK_HEAD" ] || [ -f ".git/CHERRY_PICK_HEAD" ] || [ -d ".git/rebase-merge" ]; then
+                        echo "⚠️  Detected ongoing merge/cherry-pick operation. Aborting it first..."
+                        if [ -f ".git/MERGE_HEAD" ]; then
+                            git merge --abort 2>/dev/null || true
+                        fi
+                        if [ -f ".git/CHERRY_PICK_HEAD" ]; then
+                            git cherry-pick --abort 2>/dev/null || true
+                        fi
+                        if [ -d ".git/rebase-merge" ]; then
+                            git rebase --abort 2>/dev/null || true
+                        fi
+                    fi
                     git stash push -u -m "git-manager auto-stash before moving commits ($NOW_DISPLAY)" || error_exit "Failed to stash changes"
                     STASHED=1
                     echo "✅ Changes stashed. Proceeding..."
@@ -247,17 +279,69 @@ repo_menu() {
             echo "🕒 Rewriting dates for $NUM commits to $NOW_DISPLAY..."
             git checkout "$BASE_BRANCH" || error_exit "Cannot checkout $BASE_BRANCH"
             for COMMIT in $COMMITS; do
-                git cherry-pick "$COMMIT" || {
-                    if git status | grep -q "nothing to commit"; then
-                        git cherry-pick --skip
+                if ! git cherry-pick "$COMMIT" 2>/dev/null; then
+                    # Check if cherry-pick resulted in merge conflicts
+                    if git diff --name-only --diff-filter=U | grep -q .; then
+                        echo "❌ Cherry-pick failed with merge conflicts for commit $COMMIT"
+                        echo "   Conflicted files:"
+                        git diff --name-only --diff-filter=U | sed 's/^/     - /'
+                        echo
+                        echo "   How to resolve:"
+                        echo "     1) Keep $BASE_BRANCH version (ours) - discard incoming changes"
+                        echo "     2) Use incoming version (theirs) - accept commit's changes"
+                        echo "     3) Manual resolution - exit and resolve manually"
+                        echo "     4) Skip this commit - don't cherry-pick it"
+                        read -p "Choose [1-4]: " CONFLICT_CHOICE
+                        case "$CONFLICT_CHOICE" in
+                            1)
+                                echo "✓ Resolving conflicts by keeping $BASE_BRANCH version..."
+                                git checkout --ours . || error_exit "Failed to resolve with 'ours'"
+                                git add . || error_exit "Failed to stage resolved files"
+                                git cherry-pick --continue --no-edit || error_exit "Failed to continue cherry-pick"
+                                # Amend commit with new dates
+                                GIT_AUTHOR_DATE="$NOW" GIT_COMMITTER_DATE="$NOW" git commit --amend --no-edit --date "$NOW" --reset-author || error_exit "Failed to amend commit with new dates"
+                                git show -s --date=iso --pretty=format:'  ✔ %h  %ad  %s' || error_exit "Failed to display amended commit"
+                                ;;
+                            2)
+                                echo "✓ Resolving conflicts by accepting incoming changes..."
+                                git checkout --theirs . || error_exit "Failed to resolve with 'theirs'"
+                                git add . || error_exit "Failed to stage resolved files"
+                                git cherry-pick --continue --no-edit || error_exit "Failed to continue cherry-pick"
+                                # Amend commit with new dates
+                                GIT_AUTHOR_DATE="$NOW" GIT_COMMITTER_DATE="$NOW" git commit --amend --no-edit --date "$NOW" --reset-author || error_exit "Failed to amend commit with new dates"
+                                git show -s --date=iso --pretty=format:'  ✔ %h  %ad  %s' || error_exit "Failed to display amended commit"
+                                ;;
+                            3)
+                                echo "❌ Aborting to allow manual resolution"
+                                git cherry-pick --abort || echo "⚠️  Could not abort cherry-pick state"
+                                echo "   Please resolve the conflicts and re-run the script"
+                                cd .. || error_exit "Cannot return to parent directory"
+                                return 0
+                                ;;
+                            4)
+                                echo "⊘ Skipping commit $COMMIT"
+                                git cherry-pick --abort || error_exit "Failed to abort cherry-pick"
+                                continue
+                                ;;
+                            *)
+                                echo "❌ Invalid choice"
+                                git cherry-pick --abort || echo "⚠️  Could not abort cherry-pick state"
+                                cd .. || error_exit "Cannot return to parent directory"
+                                return 0
+                                ;;
+                        esac
+                    elif git status | grep -q "nothing to commit"; then
+                        # Empty commit, skip it
+                        git cherry-pick --skip || error_exit "Failed to skip empty commit $COMMIT"
                     else
                         error_exit "Cherry-pick failed for commit $COMMIT"
                     fi
-                }
-                # Explicitly set both author and committer dates, reset author to local config to ensure attribution
-                GIT_AUTHOR_DATE="$NOW" GIT_COMMITTER_DATE="$NOW" git commit --amend --no-edit --date "$NOW" --reset-author || error_exit "Failed to amend commit $COMMIT with new dates"
-                # Show confirmation of updated author date for the just-amended commit
-                git show -s --date=iso --pretty=format:'  ✔ %h  %ad  %s' || error_exit "Failed to display amended commit"
+                else
+                    # Explicitly set both author and committer dates, reset author to local config to ensure attribution
+                    GIT_AUTHOR_DATE="$NOW" GIT_COMMITTER_DATE="$NOW" git commit --amend --no-edit --date "$NOW" --reset-author || error_exit "Failed to amend commit $COMMIT with new dates"
+                    # Show confirmation of updated author date for the just-amended commit
+                    git show -s --date=iso --pretty=format:'  ✔ %h  %ad  %s' || error_exit "Failed to display amended commit"
+                fi
             done
             echo "📜 Latest moved commits on $BASE_BRANCH (author dates shown):"
             git log -n "$NUM" --no-decorate --date=iso --pretty=format:'  %h  %ad  %s'
@@ -310,13 +394,15 @@ repo_menu() {
                         git checkout local_commit || error_exit "Cannot checkout local_commit"
                         git reset --hard "$BASE_BRANCH" || error_exit "Failed to reset local_commit to $BASE_BRANCH"
                         for COMMIT in $REMAINING_COMMITS; do
-                            git cherry-pick "$COMMIT" || {
-                                if git status | grep -q "nothing to commit"; then
-                                    git cherry-pick --skip
+                            if ! git cherry-pick "$COMMIT" 2>/dev/null; then
+                                if git diff --name-only --diff-filter=U | grep -q .; then
+                                    error_exit "Merge conflict while rewriting local_commit for commit $COMMIT. Run 'git cherry-pick --abort' and try again."
+                                elif git status | grep -q "nothing to commit"; then
+                                    git cherry-pick --skip || error_exit "Failed to skip empty commit $COMMIT"
                                 else
                                     error_exit "Cherry-pick failed while rewriting local_commit for commit $COMMIT"
                                 fi
-                            }
+                            fi
                         done
                         echo "✅ local_commit updated to reflect remaining commits."
                     fi
