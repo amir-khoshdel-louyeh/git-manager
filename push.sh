@@ -276,10 +276,12 @@ repo_menu() {
                 cd .. || error_exit "Cannot return to parent directory"
                 return 0
             fi
-            echo "🕒 Rewriting dates for $NUM commits to $NOW_DISPLAY..."
+            echo "🕒 Rewriting commits with current user info..."
+            echo "⚠️  All commits will be authored by: $(git config user.name) <$(git config user.email)>"
             git checkout "$BASE_BRANCH" || error_exit "Cannot checkout $BASE_BRANCH"
             for COMMIT in $COMMITS; do
-                if ! git cherry-pick "$COMMIT" 2>/dev/null; then
+                # Use --no-commit to stage changes without creating commit yet, so we can create it with correct author info
+                if ! git cherry-pick --no-commit "$COMMIT" 2>/dev/null; then
                     # Check if cherry-pick resulted in merge conflicts
                     if git diff --name-only --diff-filter=U | grep -q .; then
                         echo "❌ Cherry-pick failed with merge conflicts for commit $COMMIT"
@@ -297,19 +299,21 @@ repo_menu() {
                                 echo "✓ Resolving conflicts by keeping $BASE_BRANCH version..."
                                 git checkout --ours . || error_exit "Failed to resolve with 'ours'"
                                 git add . || error_exit "Failed to stage resolved files"
-                                git cherry-pick --continue --no-edit || error_exit "Failed to continue cherry-pick"
-                                # Amend commit with new dates
-                                GIT_AUTHOR_DATE="$NOW" GIT_COMMITTER_DATE="$NOW" git commit --amend --no-edit --date "$NOW" --reset-author || error_exit "Failed to amend commit with new dates"
-                                git show -s --date=iso --pretty=format:'  ✔ %h  %ad  %s' || error_exit "Failed to display amended commit"
+                                # Get the commit message
+                                COMMIT_MSG=$(git show -s --format=%B "$COMMIT")
+                                # Create commit with correct author info from current user
+                                GIT_AUTHOR_DATE="$NOW" GIT_COMMITTER_DATE="$NOW" git commit -m "$COMMIT_MSG" --date "$NOW" || error_exit "Failed to create commit after conflict resolution"
+                                git show -s --date=iso --pretty=format:'  ✔ %h  %ad  %an <%ae>' || error_exit "Failed to display commit"
                                 ;;
                             2)
                                 echo "✓ Resolving conflicts by accepting incoming changes..."
                                 git checkout --theirs . || error_exit "Failed to resolve with 'theirs'"
                                 git add . || error_exit "Failed to stage resolved files"
-                                git cherry-pick --continue --no-edit || error_exit "Failed to continue cherry-pick"
-                                # Amend commit with new dates
-                                GIT_AUTHOR_DATE="$NOW" GIT_COMMITTER_DATE="$NOW" git commit --amend --no-edit --date "$NOW" --reset-author || error_exit "Failed to amend commit with new dates"
-                                git show -s --date=iso --pretty=format:'  ✔ %h  %ad  %s' || error_exit "Failed to display amended commit"
+                                # Get the commit message
+                                COMMIT_MSG=$(git show -s --format=%B "$COMMIT")
+                                # Create commit with correct author info from current user
+                                GIT_AUTHOR_DATE="$NOW" GIT_COMMITTER_DATE="$NOW" git commit -m "$COMMIT_MSG" --date "$NOW" || error_exit "Failed to create commit after conflict resolution"
+                                git show -s --date=iso --pretty=format:'  ✔ %h  %ad  %an <%ae>' || error_exit "Failed to display commit"
                                 ;;
                             3)
                                 echo "❌ Aborting to allow manual resolution"
@@ -337,14 +341,17 @@ repo_menu() {
                         error_exit "Cherry-pick failed for commit $COMMIT"
                     fi
                 else
-                    # Explicitly set both author and committer dates, reset author to local config to ensure attribution
-                    GIT_AUTHOR_DATE="$NOW" GIT_COMMITTER_DATE="$NOW" git commit --amend --no-edit --date "$NOW" --reset-author || error_exit "Failed to amend commit $COMMIT with new dates"
-                    # Show confirmation of updated author date for the just-amended commit
-                    git show -s --date=iso --pretty=format:'  ✔ %h  %ad  %s' || error_exit "Failed to display amended commit"
+                    # Cherry-pick was successful with --no-commit, now create commit with current user's author info
+                    # Get the commit message from original commit
+                    COMMIT_MSG=$(git show -s --format=%B "$COMMIT")
+                    # Create the commit with current user as author and today's date
+                    GIT_AUTHOR_DATE="$NOW" GIT_COMMITTER_DATE="$NOW" git commit -m "$COMMIT_MSG" --date "$NOW" || error_exit "Failed to create commit $COMMIT with new dates"
+                    # Show confirmation of the new commit with author info
+                    git show -s --date=iso --pretty=format:'  ✔ %h  %ad  %an <%ae>' || error_exit "Failed to display new commit"
                 fi
             done
-            echo "📜 Latest moved commits on $BASE_BRANCH (author dates shown):"
-            git log -n "$NUM" --no-decorate --date=iso --pretty=format:'  %h  %ad  %s'
+            echo "📜 Latest moved commits on $BASE_BRANCH (with author info):"
+            git log -n "$NUM" --no-decorate --date=iso --pretty=format:'  %h  %ad  %an <%ae>'
             # ===== Pre-push validation =====
             # 1) Ensure remote default branch matches target base branch
             DEFAULT_REMOTE_HEAD=$(git remote show origin 2>/dev/null | sed -n 's/.*HEAD branch: \(.*\)$/\1/p' || true)
@@ -364,18 +371,29 @@ repo_menu() {
             fi
             # 3) Ensure author email matches local git config (so GitHub can attribute contributions)
             EXPECTED_EMAIL=$(git config user.email || true)
+            EXPECTED_NAME=$(git config user.name || true)
             if [ -z "${EXPECTED_EMAIL:-}" ]; then
                 error_exit "Git 'user.email' is not set. Configure it (git config user.email you@example.com) before pushing."
             fi
             BAD_EMAIL_COUNT=0
+            BAD_NAME_COUNT=0
             while IFS= read -r AE; do
                 if [ -n "$AE" ] && [ "$AE" != "$EXPECTED_EMAIL" ]; then
                     BAD_EMAIL_COUNT=$((BAD_EMAIL_COUNT+1))
                 fi
             done < <(git log -n "$NUM" --pretty=format:'%ae' || true)
+            while IFS= read -r AN; do
+                if [ -n "$AN" ] && [ "$AN" != "$EXPECTED_NAME" ]; then
+                    BAD_NAME_COUNT=$((BAD_NAME_COUNT+1))
+                fi
+            done < <(git log -n "$NUM" --pretty=format:'%an' || true)
             if [ "$BAD_EMAIL_COUNT" -gt 0 ]; then
                 error_exit "Found $BAD_EMAIL_COUNT commit(s) with author email not matching '$EXPECTED_EMAIL'. Aborting push."
             fi
+            if [ "$BAD_NAME_COUNT" -gt 0 ]; then
+                error_exit "Found $BAD_NAME_COUNT commit(s) with author name not matching '$EXPECTED_NAME'. Aborting push."
+            fi
+            echo "✅ All $NUM commits have correct author info (will be attributed to $EXPECTED_NAME <$EXPECTED_EMAIL>)"
             echo "🚀 Pushing to origin $BASE_BRANCH..."
             git push origin "$BASE_BRANCH" || error_exit "Push failed"
             echo "✅ Done! $NUM commits moved with date/time $NOW."
