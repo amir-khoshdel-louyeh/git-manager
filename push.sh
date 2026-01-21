@@ -1,10 +1,58 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 error_exit() {
     echo "❌ Error: $1"
     exit 1
 }
+
+# Simple command existence check for portability
+require_cmd() {
+    command -v "$1" >/dev/null 2>&1 || error_exit "Required command '$1' not found. Please install it and retry."
+}
+
+# Check for git and offer to install it interactively if missing
+if ! command -v git >/dev/null 2>&1; then
+    echo "❗ git not found on this system."
+    read -r -p "Do you want to attempt to install git now? [Y/n] " INSTALL_GIT
+    INSTALL_GIT="${INSTALL_GIT:-Y}"
+    if [[ "$INSTALL_GIT" =~ ^[Yy] ]]; then
+        # Determine whether to use sudo
+        SUDO=""
+        if [ "$(id -u)" -ne 0 ]; then
+            SUDO="sudo "
+        fi
+        # Detect package manager and install
+        if command -v apt-get >/dev/null 2>&1; then
+            PKG_CMD="$SUDO""apt-get update && $SUDO apt-get install -y git"
+        elif command -v dnf >/dev/null 2>&1; then
+            PKG_CMD="$SUDO dnf install -y git"
+        elif command -v yum >/dev/null 2>&1; then
+            PKG_CMD="$SUDO yum install -y git"
+        elif command -v pacman >/dev/null 2>&1; then
+            PKG_CMD="$SUDO pacman -Syu --noconfirm git"
+        elif command -v zypper >/dev/null 2>&1; then
+            PKG_CMD="$SUDO zypper install -y git"
+        elif command -v apk >/dev/null 2>&1; then
+            PKG_CMD="$SUDO apk add git"
+        elif command -v brew >/dev/null 2>&1; then
+            PKG_CMD="brew install git"
+        else
+            error_exit "No supported package manager found to install git. Please install git manually."
+        fi
+
+        echo "➡ Installing git using: $PKG_CMD"
+        # Run the install command; if it fails, report and exit
+        if ! eval "$PKG_CMD"; then
+            error_exit "Failed to install git. Please install it manually and retry."
+        fi
+        echo "✅ git installed"
+    else
+        error_exit "git is required. Aborting."
+    fi
+fi
+
+require_cmd sed
 
 # Capture timestamp with explicit timezone to avoid date-day ambiguity
 # Use ISO 8601 format for git commands
@@ -64,8 +112,8 @@ ensure_main_branch() {
 }
 
 # Determine base directory containing all repositories
-# Priority: first CLI arg -> env BASE_DIR -> default path
-BASE_DIR="${1:-${BASE_DIR:-/home/amir/GitHub}}"
+# Priority: first CLI arg -> env BASE_DIR -> default path (use user's HOME)
+BASE_DIR="${1:-${BASE_DIR:-$HOME/GitHub}}"
 if [ ! -d "$BASE_DIR" ]; then
     error_exit "Base directory '$BASE_DIR' not found"
 fi
@@ -146,14 +194,28 @@ repo_menu() {
     local GIT_USER_EMAIL=$(git config user.email 2>/dev/null || true)
     if [ -z "$GIT_USER_NAME" ] || [ -z "$GIT_USER_EMAIL" ]; then
         echo "❌ Git user not configured"
-        echo "   Please configure git identity:"
-        echo "     git config user.name \"Your Name\""
-        echo "     git config user.email \"you@example.com\""
-        if [ -n "$SUDO_USER" ]; then
-            echo "   (Or run without sudo to use your own git config)"
+        echo "Please enter the identity to use for commits."
+        read -r -p "  Your Name (user.name) [leave empty to abort]: " INPUT_NAME
+        read -r -p "  Your Email (user.email) [leave empty to abort]: " INPUT_EMAIL
+        if [ -z "$INPUT_NAME" ] || [ -z "$INPUT_EMAIL" ]; then
+            echo "🛑 Aborted. Git identity not set."
+            if [ -n "${SUDO_USER:-}" ]; then
+                echo "   (Or run without sudo to use your own git config)"
+            fi
+            cd .. || error_exit "Cannot return to parent directory"
+            return 0
         fi
-        cd .. || error_exit "Cannot return to parent directory"
-        return 0
+        echo "➡ Setting git identity..."
+        if [ -n "${SUDO_USER:-}" ]; then
+            sudo -u "$SUDO_USER" git config --global user.name "$INPUT_NAME" || error_exit "Failed to set git user.name for $SUDO_USER"
+            sudo -u "$SUDO_USER" git config --global user.email "$INPUT_EMAIL" || error_exit "Failed to set git user.email for $SUDO_USER"
+        else
+            git config --global user.name "$INPUT_NAME" || error_exit "Failed to set git user.name"
+            git config --global user.email "$INPUT_EMAIL" || error_exit "Failed to set git user.email"
+        fi
+        echo "✅ Git identity set to: $INPUT_NAME <$INPUT_EMAIL>"
+        GIT_USER_NAME="$INPUT_NAME"
+        GIT_USER_EMAIL="$INPUT_EMAIL"
     fi
 
     cd .. || error_exit "Cannot return to parent directory"
