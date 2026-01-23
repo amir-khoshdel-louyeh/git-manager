@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import subprocess
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Sequence
@@ -138,6 +139,29 @@ def print_repo_table(base_dir: Path, states: Iterable[RepoState]) -> None:
 
 def repo_menu(state: RepoState) -> None:
     raise GitManagerError("Interactive actions not implemented yet")
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def now_display() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S %z")
+
+
+def ensure_git_identity(repo: Path) -> None:
+    name = run_git(["config", "user.name"], cwd=repo).strip()
+    email = run_git(["config", "user.email"], cwd=repo).strip()
+    if not name or not email:
+        raise GitManagerError("Git user identity is not configured (user.name / user.email)")
+
+
+def working_tree_clean(repo: Path) -> bool:
+    return git_ok(["diff", "--quiet"], cwd=repo) and git_ok(["diff", "--cached", "--quiet"], cwd=repo)
+
+
+def stash_changes(repo: Path, message: str) -> None:
+    run_git(["stash", "push", "-u", "-m", message], cwd=repo)
 
 
 def git_ok(args: Sequence[str], *, cwd: Path) -> bool:
