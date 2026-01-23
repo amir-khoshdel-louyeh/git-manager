@@ -28,6 +28,117 @@ def run_git(args: Sequence[str], *, cwd: Path) -> str:
         raise GitManagerError(f"git {' '.join(args)} failed in {cwd}: {stderr}")
     return result.stdout
 
+def detect_base_branch(repo: Path) -> str:
+    if git_ok(["show-ref", "--verify", "--quiet", "refs/heads/main"], cwd=repo):
+        return "main"
+    if git_ok(["show-ref", "--verify", "--quiet", "refs/heads/master"], cwd=repo):
+        return "master"
+    origin_head = (
+        subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "origin/HEAD"],
+            cwd=str(repo),
+            check=False,
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+        or ""
+    )
+    if origin_head and origin_head != "HEAD":
+        return origin_head.removeprefix("origin/")
+    return "main"
+
+
+def ensure_main_branch(repo: Path) -> None:
+    if git_ok(["show-ref", "--verify", "--quiet", "refs/heads/main"], cwd=repo):
+        return
+    if git_ok(["show-ref", "--verify", "--quiet", "refs/heads/master"], cwd=repo):
+        try:
+            run_git(["branch", "main", "master"], cwd=repo)
+        except GitManagerError:
+            pass
+        return
+    if git_ok(["show-ref", "--verify", "--quiet", "refs/remotes/origin/main"], cwd=repo):
+        try:
+            run_git(["branch", "main", "origin/main"], cwd=repo)
+        except GitManagerError:
+            pass
+        return
+    if git_ok(["show-ref", "--verify", "--quiet", "refs/remotes/origin/master"], cwd=repo):
+        try:
+            run_git(["branch", "main", "origin/master"], cwd=repo)
+        except GitManagerError:
+            pass
+        return
+    try:
+        run_git(["branch", "main"], cwd=repo)
+    except GitManagerError:
+        pass
+
+
+def current_branch(repo: Path) -> str:
+    result = subprocess.run(
+        ["git", "symbolic-ref", "--short", "-q", "HEAD"],
+        cwd=str(repo),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    branch = result.stdout.strip()
+    return branch or "HEAD"
+
+
+def repo_pending_count(repo: Path, base_branch: str) -> int:
+    if not git_ok(["rev-parse", "--verify", "--quiet", "local_commit"], cwd=repo):
+        return 0
+    if not git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{base_branch}"], cwd=repo):
+        return 0
+    out = run_git(["rev-list", "--count", f"{base_branch}..local_commit"], cwd=repo)
+    return int(out.strip() or "0")
+
+
+def scan_repos(base_dir: Path) -> List[RepoState]:
+    repo_states: List[RepoState] = []
+    for child in sorted(base_dir.iterdir()):
+        if not child.is_dir():
+            continue
+        if not (child / ".git").is_dir():
+            continue
+        ensure_main_branch(child)
+        base_branch = detect_base_branch(child)
+        branch = current_branch(child)
+        local_exists = branch == "local_commit" or git_ok(
+            ["show-ref", "--verify", "--quiet", "refs/heads/local_commit"], cwd=child
+        )
+        pending = repo_pending_count(child, base_branch) if local_exists else 0
+        repo_states.append(
+            RepoState(
+                path=child,
+                name=child.name,
+                base_branch=base_branch,
+                current_branch=branch,
+                local_commit_exists=local_exists,
+                pending_count=pending,
+            )
+        )
+    return repo_states
+
+
+def print_repo_table(base_dir: Path, states: Iterable[RepoState]) -> None:
+    print(f"\n🔍 Scanning repositories in: {base_dir}")
+    header = f"{'No.':<4} {'Repository':<36} {'local_commit':<14} {'commits':<10} {'branch':<24}"
+    print("📋 Repository summary:")
+    print(header)
+    print(f"{'----':<4} {'-'*36:<36} {'-'*14:<14} {'-'*10:<10} {'-'*24:<24}")
+    for idx, state in enumerate(states, start=1):
+        local_flag = "yes" if state.local_commit_exists else "no"
+        print(
+            f"[{idx:<2}] {state.name:<36} {local_flag:<14} {state.pending_count:<10} {state.current_branch:<24}"
+        )
+
+
+def repo_menu(state: RepoState) -> None:
+    raise GitManagerError("Interactive actions not implemented yet")
+
 
 def git_ok(args: Sequence[str], *, cwd: Path) -> bool:
     """Return True if git command exits with 0, suppressing output."""
@@ -66,8 +177,19 @@ def resolve_base_dir(arg_base: str | None) -> Path:
 def main() -> None:
     args = parse_args()
     base_dir = resolve_base_dir(args.base_dir)
-    print(f"Scanning repositories in: {base_dir}")
-    # TODO: implement scanning and interactive loop
+    states = scan_repos(base_dir)
+    print_repo_table(base_dir, states)
+    print("\n👉 Select a repository number (or 0 to quit): ", end="")
+    choice = input().strip()
+    if not choice.isdigit():
+        raise GitManagerError("Invalid selection")
+    idx = int(choice)
+    if idx == 0:
+        print("👋 Bye")
+        return
+    if idx < 1 or idx > len(states):
+        raise GitManagerError("Invalid selection")
+    repo_menu(states[idx - 1])
 
 
 if __name__ == "__main__":
