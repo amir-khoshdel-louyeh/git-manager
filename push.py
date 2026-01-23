@@ -137,8 +137,84 @@ def print_repo_table(base_dir: Path, states: Iterable[RepoState]) -> None:
         )
 
 
+def checkout_branch(repo: Path, branch: str, start_point: str | None = None) -> None:
+    args = ["checkout"]
+    if start_point:
+        args += ["-b", branch, start_point]
+    else:
+        args.append(branch)
+    run_git(args, cwd=repo)
+
+
+def switch_to_local_commit(repo: Path, base_branch: str, current_branch: str) -> str:
+    if git_ok(["show-ref", "--verify", "--quiet", "refs/heads/local_commit"], cwd=repo):
+        checkout_branch(repo, "local_commit")
+        return "local_commit"
+    start_ref = base_branch if git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{base_branch}"], cwd=repo) else current_branch
+    if git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{start_ref}"], cwd=repo):
+        checkout_branch(repo, "local_commit", start_ref)
+        return "local_commit"
+    if git_ok(["show-ref", "--verify", "--quiet", f"refs/remotes/origin/{base_branch}"], cwd=repo):
+        checkout_branch(repo, "local_commit", f"origin/{base_branch}")
+        return "local_commit"
+    checkout_branch(repo, "local_commit")
+    return "local_commit"
+
+
+def switch_to_base(repo: Path, base_branch: str) -> str:
+    if git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{base_branch}"], cwd=repo):
+        checkout_branch(repo, base_branch)
+        return base_branch
+    if git_ok(["show-ref", "--verify", "--quiet", f"refs/remotes/origin/{base_branch}"], cwd=repo):
+        checkout_branch(repo, base_branch, f"origin/{base_branch}")
+        return base_branch
+    raise GitManagerError(f"Base branch '{base_branch}' not found locally or on origin")
+
+
+def preview_commits(repo: Path, base_branch: str) -> None:
+    out = run_git([
+        "log",
+        "--reverse",
+        "--no-decorate",
+        "--date=short",
+        "--pretty=format:  %h  %ad  %s",
+        f"{base_branch}..local_commit",
+    ], cwd=repo)
+    print("📜 Commits (oldest → newest):")
+    print(out)
+    print()
+
+
 def repo_menu(state: RepoState) -> None:
-    raise GitManagerError("Interactive actions not implemented yet")
+    repo = state.path
+    ensure_git_identity(repo)
+    print(
+        f"\nℹ️  {state.name} | base: {state.base_branch} | current: {state.current_branch} | "
+        f"local_commit: {'yes' if state.local_commit_exists else 'no'} | commits: {state.pending_count}"
+    )
+    print("Choose an action:")
+    if state.current_branch == "local_commit":
+        print(f"  1) Switch to {state.base_branch}")
+    else:
+        print("  1) Switch to local_commit (create if missing)")
+    print(f"  2) Preview commits ({state.base_branch}..local_commit)")
+    print(f"  3) Move N commits from local_commit to {state.base_branch}")
+    print("  4) Back to list")
+    action = input("Select 1-4: ").strip()
+
+    if action == "1":
+        if state.current_branch == "local_commit":
+            new_branch = switch_to_base(repo, state.base_branch)
+            print(f"✅ On branch {new_branch}")
+        else:
+            new_branch = switch_to_local_commit(repo, state.base_branch, state.current_branch)
+            print(f"✅ On branch {new_branch}")
+    elif action == "2":
+        preview_commits(repo, state.base_branch)
+    elif action == "3":
+        raise GitManagerError("Move commits not implemented yet")
+    else:
+        return
 
 
 def now_iso() -> str:
