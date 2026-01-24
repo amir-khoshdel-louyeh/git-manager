@@ -29,6 +29,23 @@ def run_git(args: Sequence[str], *, cwd: Path) -> str:
         raise GitManagerError(f"git {' '.join(args)} failed in {cwd}: {stderr}")
     return result.stdout
 
+
+def run_git_env(args: Sequence[str], *, cwd: Path, extra_env: dict[str, str]) -> str:
+    env = os.environ.copy()
+    env.update(extra_env)
+    result = subprocess.run(
+        ["git", *args],
+        cwd=str(cwd),
+        check=False,
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+    if result.returncode != 0:
+        stderr = result.stderr.strip() or result.stdout.strip()
+        raise GitManagerError(f"git {' '.join(args)} failed in {cwd}: {stderr}")
+    return result.stdout
+
 def detect_base_branch(repo: Path) -> str:
     if git_ok(["show-ref", "--verify", "--quiet", "refs/heads/main"], cwd=repo):
         return "main"
@@ -185,6 +202,127 @@ def preview_commits(repo: Path, base_branch: str) -> None:
     print()
 
 
+def move_commits(repo: Path, base_branch: str, pending_count: int, current_branch: str) -> None:
+    if not git_ok(["rev-parse", "--verify", "--quiet", "local_commit"], cwd=repo):
+        raise GitManagerError("local_commit does not exist")
+    if not git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{base_branch}"], cwd=repo):
+        raise GitManagerError(f"Base branch '{base_branch}' not found locally")
+
+    # Refresh count
+    refreshed = int(
+        run_git(["rev-list", "--count", f"{base_branch}..local_commit"], cwd=repo).strip() or "0"
+    )
+    if refreshed == 0:
+        print("❌ No commits to move.")
+        return
+    preview_commits(repo, base_branch)
+    raw = input(f"➡ How many commits to move to {base_branch} (1..{refreshed})? ").strip()
+    if not raw.isdigit():
+        raise GitManagerError("Invalid number")
+    num = int(raw)
+    if num <= 0 or num > refreshed:
+        raise GitManagerError("Invalid number")
+
+    stashed = False
+    if not working_tree_clean(repo):
+        choice = input("Working tree not clean. Stash changes and continue? [y/N]: ").strip().lower()
+        if choice.startswith("y"):
+            stash_changes(repo, f"git-manager auto-stash before moving commits ({now_display()})")
+            stashed = True
+        else:
+            raise GitManagerError("Aborted: working tree not clean")
+
+    commits = run_git(["rev-list", "--reverse", f"{base_branch}..local_commit"], cwd=repo).strip().splitlines()
+    commits = commits[:num]
+    if not commits:
+        raise GitManagerError("No commits to process")
+
+    checkout_branch(repo, base_branch)
+    now_iso_value = now_iso()
+    for commit in commits:
+        try:
+            run_git(["cherry-pick", "--no-commit", commit], cwd=repo)
+        except GitManagerError:
+            # Detect conflicts
+            conflict_names = run_git(["diff", "--name-only", "--diff-filter=U"], cwd=repo).strip()
+            if conflict_names:
+                print("❌ Cherry-pick failed with merge conflicts for commit", commit)
+                print(conflict_names)
+                run_git(["cherry-pick", "--abort"], cwd=repo)
+                raise
+            status = run_git(["status"], cwd=repo)
+            if "nothing to commit" in status:
+                run_git(["cherry-pick", "--skip"], cwd=repo)
+                continue
+            raise
+
+        message = run_git(["show", "-s", "--format=%B", commit], cwd=repo)
+        run_git_env(
+            ["commit", "-m", message, "--date", now_iso_value],
+            cwd=repo,
+            extra_env={"GIT_AUTHOR_DATE": now_iso_value, "GIT_COMMITTER_DATE": now_iso_value},
+        )
+        print(run_git(["show", "-s", "--date=iso", "--pretty=format:  ✔ %h  %ad  %an <%ae>"], cwd=repo))
+
+    print(f"📜 Latest moved commits on {base_branch} (with author info):")
+    print(run_git(["log", "-n", str(num), "--no-decorate", "--date=iso", "--pretty=format:  %h  %ad  %an <%ae>"], cwd=repo))
+
+    default_head = run_git(["remote", "show", "origin"], cwd=repo)
+    for line in default_head.splitlines():
+        if "HEAD branch:" in line:
+            remote_head = line.split(":", 1)[1].strip()
+            if remote_head and remote_head != base_branch:
+                raise GitManagerError(
+                    f"Remote default branch is '{remote_head}', but target is '{base_branch}'."
+                )
+            break
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    dates = run_git(["log", "-n", str(num), "--date=short", "--pretty=format:%ad"], cwd=repo).splitlines()
+    bad_dates = [d for d in dates if d and d != today]
+    if bad_dates:
+        raise GitManagerError(f"Found {len(bad_dates)} commit(s) with author date not equal to today ({today})")
+
+    expected_email = run_git(["config", "user.email"], cwd=repo).strip()
+    expected_name = run_git(["config", "user.name"], cwd=repo).strip()
+    emails = run_git(["log", "-n", str(num), "--pretty=format:%ae"], cwd=repo).splitlines()
+    names = run_git(["log", "-n", str(num), "--pretty=format:%an"], cwd=repo).splitlines()
+    if any(e and e != expected_email for e in emails):
+        raise GitManagerError(f"Found commit(s) with author email not matching '{expected_email}'")
+    if any(n and n != expected_name for n in names):
+        raise GitManagerError(f"Found commit(s) with author name not matching '{expected_name}'")
+
+    print(f"✅ All {num} commits have correct author info (will be attributed to {expected_name} <{expected_email}>)")
+    print(f"🚀 Pushing to origin {base_branch}...")
+    run_git(["push", "origin", base_branch], cwd=repo)
+    print(f"✅ Done! {num} commits moved with date/time {now_iso_value}.")
+
+    remaining = run_git(["rev-list", "--reverse", f"{base_branch}..local_commit"], cwd=repo).strip().splitlines()
+    if remaining:
+        checkout_branch(repo, "local_commit")
+        run_git(["reset", "--hard", base_branch], cwd=repo)
+        for commit in remaining:
+            try:
+                run_git(["cherry-pick", commit], cwd=repo)
+            except GitManagerError:
+                run_git(["cherry-pick", "--abort"], cwd=repo)
+                raise GitManagerError(
+                    f"Cherry-pick failed while rewriting local_commit for commit {commit}. Resolve manually."
+                )
+        print("✅ local_commit updated to reflect remaining commits.")
+    else:
+        checkout_branch(repo, "local_commit")
+        run_git(["reset", "--hard", base_branch], cwd=repo)
+        print(f"✅ local_commit is now aligned with {base_branch}")
+
+    if stashed:
+        checkout_branch(repo, current_branch)
+        try:
+            run_git(["stash", "pop"], cwd=repo)
+        except GitManagerError:
+            print("⚠️ Stash pop had conflicts or failed. Resolve manually.")
+
+
 def repo_menu(state: RepoState) -> None:
     repo = state.path
     ensure_git_identity(repo)
@@ -212,7 +350,7 @@ def repo_menu(state: RepoState) -> None:
     elif action == "2":
         preview_commits(repo, state.base_branch)
     elif action == "3":
-        raise GitManagerError("Move commits not implemented yet")
+        move_commits(repo, state.base_branch, state.pending_count, state.current_branch)
     else:
         return
 
@@ -277,19 +415,22 @@ def resolve_base_dir(arg_base: str | None) -> Path:
 def main() -> None:
     args = parse_args()
     base_dir = resolve_base_dir(args.base_dir)
-    states = scan_repos(base_dir)
-    print_repo_table(base_dir, states)
-    print("\n👉 Select a repository number (or 0 to quit): ", end="")
-    choice = input().strip()
-    if not choice.isdigit():
-        raise GitManagerError("Invalid selection")
-    idx = int(choice)
-    if idx == 0:
-        print("👋 Bye")
-        return
-    if idx < 1 or idx > len(states):
-        raise GitManagerError("Invalid selection")
-    repo_menu(states[idx - 1])
+    while True:
+        states = scan_repos(base_dir)
+        print_repo_table(base_dir, states)
+        choice = input("\n👉 Select a repository number (or 0 to quit): ").strip()
+        if not choice.isdigit():
+            print("❌ Invalid selection")
+            continue
+        idx = int(choice)
+        if idx == 0:
+            print("👋 Bye")
+            return
+        if idx < 1 or idx > len(states):
+            print("❌ Invalid selection")
+            continue
+        repo_menu(states[idx - 1])
+        input("Press Enter to refresh the list...")
 
 
 if __name__ == "__main__":
