@@ -325,6 +325,54 @@ class GitManagerGUI:
         self.output.see(tk.END)
         self.root.update()  # Force GUI refresh to show updates in real-time
 
+    # --- helpers ---------------------------------------------------------
+    def _abort_in_progress_ops(self, repo: Path) -> None:
+        git_dir = repo / ".git"
+        if (git_dir / "MERGE_HEAD").exists():
+            try:
+                GitOperations.run_git(["merge", "--abort"], cwd=repo)
+            except GitManagerError:
+                self.append_output("⚠️  Could not abort merge cleanly; please resolve manually.")
+        if (git_dir / "CHERRY_PICK_HEAD").exists():
+            try:
+                GitOperations.run_git(["cherry-pick", "--abort"], cwd=repo)
+            except GitManagerError:
+                self.append_output("⚠️  Could not abort cherry-pick cleanly; please resolve manually.")
+        if (git_dir / "rebase-merge").exists():
+            try:
+                GitOperations.run_git(["rebase", "--abort"], cwd=repo)
+            except GitManagerError:
+                self.append_output("⚠️  Could not abort rebase cleanly; please resolve manually.")
+
+    def _choose_conflict_resolution(self, commit: str, conflicts: str) -> str:
+        prompt = (
+            f"Cherry-pick conflicts for {commit[:7]}\n\n"
+            f"Conflicted files:\n{conflicts}\n\n"
+            "Choose: 1) Keep base (ours)  2) Incoming (theirs)  3) Abort  4) Skip"
+        )
+        choice = simpledialog.askstring("Conflicts", prompt, parent=self.root)
+        if not choice:
+            raise GitManagerError("Conflict resolution cancelled")
+        choice = choice.strip()
+        if choice == "1":
+            return "ours"
+        if choice == "2":
+            return "theirs"
+        if choice == "3":
+            return "abort"
+        if choice == "4":
+            return "skip"
+        raise GitManagerError("Invalid conflict resolution choice")
+
+    def _backup_local_commit(self, repo: Path) -> str:
+        backup_name = f"backup_local_commit_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        try:
+            GitOperations.run_git(["branch", backup_name, "local_commit"], cwd=repo)
+            self.append_output(f"🛟 Created {backup_name} from local_commit before rewrite")
+        except GitManagerError:
+            self.append_output("⚠️  Failed to create backup branch; proceeding without backup")
+        return backup_name
+
     def selected_state(self) -> Optional[RepoState]:
         sel = self.tree.selection()
         if not sel:
@@ -400,16 +448,29 @@ class GitManagerGUI:
             if num is None:
                 return
 
+            step_mode = False
+            if num > 1:
+                step_mode = messagebox.askyesno(
+                    "Step through commits",
+                    "Apply commits one at a time with confirmation before each cherry-pick?",
+                )
+
             stashed = False
             if not WorkingTreeManager.is_clean(repo):
-                if not messagebox.askyesno("Uncommitted Changes", "You have uncommitted changes. Save them temporarily to proceed?"):
+                if not messagebox.askyesno(
+                    "Uncommitted Changes",
+                    "Working tree not clean. Stash (incl. untracked) and continue?\n"
+                    "This will also abort any ongoing merge/cherry-pick/rebase first.",
+                ):
                     return
+                self._abort_in_progress_ops(repo)
                 WorkingTreeManager.stash(repo, f"git-manager auto-stash before moving commits ({now_display()})")
                 stashed = True
 
             commits = GitOperations.run_git(["rev-list", "--reverse", f"{state.base_branch}..local_commit"], cwd=repo).strip().splitlines()[:num]
             if not commits:
                 raise GitManagerError("No commits to process")
+            processed: list[str] = []
 
             self.append_output(f"🕒 Rewriting commits with current user info...\n")
             expected_email = GitOperations.run_git(["config", "user.email"], cwd=repo).strip()
@@ -419,15 +480,60 @@ class GitManagerGUI:
             BranchManager.checkout(repo, state.base_branch)
             now_iso_value = now_iso()
             for commit in commits:
+                if step_mode:
+                    subject = GitOperations.run_git(["show", "-s", "--format=%s", commit], cwd=repo).strip()
+                    if not messagebox.askyesno(
+                        "Move commit",
+                        f"Move commit {commit[:7]}\n{subject}\n\nApply this commit?",
+                    ):
+                        break
                 try:
                     GitOperations.run_git(["cherry-pick", "--no-commit", commit], cwd=repo)
                 except GitManagerError:
                     conflict_names = GitOperations.run_git(["diff", "--name-only", "--diff-filter=U"], cwd=repo).strip()
                     if conflict_names:
+                        try:
+                            choice = self._choose_conflict_resolution(commit, conflict_names)
+                        except GitManagerError as choice_err:
+                            GitOperations.run_git(["cherry-pick", "--abort"], cwd=repo)
+                            raise choice_err
+
+                        if choice == "ours":
+                            GitOperations.run_git(["checkout", "--ours", "."], cwd=repo)
+                            GitOperations.run_git(["add", "."], cwd=repo)
+                            msg = GitOperations.run_git(["show", "-s", "--format=%B", commit], cwd=repo)
+                            GitOperations.run_git_env(
+                                ["commit", "-m", msg, "--date", now_iso_value],
+                                cwd=repo,
+                                extra_env={"GIT_AUTHOR_DATE": now_iso_value, "GIT_COMMITTER_DATE": now_iso_value},
+                            )
+                            self.append_output(f"✓ Resolved with ours for {commit[:7]}")
+                            self.append_output(GitOperations.run_git(["show", "-s", "--date=iso", "--pretty=format:  ✔ %h  %ad  %an <%ae>"], cwd=repo) + "\n")
+                            processed.append(commit)
+                            continue
+
+                        if choice == "theirs":
+                            GitOperations.run_git(["checkout", "--theirs", "."], cwd=repo)
+                            GitOperations.run_git(["add", "."], cwd=repo)
+                            msg = GitOperations.run_git(["show", "-s", "--format=%B", commit], cwd=repo)
+                            GitOperations.run_git_env(
+                                ["commit", "-m", msg, "--date", now_iso_value],
+                                cwd=repo,
+                                extra_env={"GIT_AUTHOR_DATE": now_iso_value, "GIT_COMMITTER_DATE": now_iso_value},
+                            )
+                            self.append_output(f"✓ Resolved with theirs for {commit[:7]}")
+                            self.append_output(GitOperations.run_git(["show", "-s", "--date=iso", "--pretty=format:  ✔ %h  %ad  %an <%ae>"], cwd=repo) + "\n")
+                            processed.append(commit)
+                            continue
+
+                        if choice == "skip":
+                            GitOperations.run_git(["cherry-pick", "--abort"], cwd=repo)
+                            self.append_output(f"⊘ Skipping commit {commit[:7]} after conflicts")
+                            continue
+
+                        # Abort / manual resolution
                         GitOperations.run_git(["cherry-pick", "--abort"], cwd=repo)
-                        raise GitManagerError(
-                            f"Cherry-pick conflicts for commit {commit}. Resolve manually and retry.\n{conflict_names}"
-                        )
+                        raise GitManagerError("Cherry-pick aborted for manual resolution")
                     status = GitOperations.run_git(["status"], cwd=repo)
                     if "nothing to commit" in status:
                         self.append_output(f"⊘ Skipping empty commit {commit[:7]}\n")
@@ -447,10 +553,22 @@ class GitManagerGUI:
                     cwd=repo,
                     extra_env={"GIT_AUTHOR_DATE": now_iso_value, "GIT_COMMITTER_DATE": now_iso_value},
                 )
+                processed.append(commit)
                 self.append_output(GitOperations.run_git(["show", "-s", "--date=iso", "--pretty=format:  ✔ %h  %ad  %an <%ae>"], cwd=repo) + "\n")
 
+            processed_count = len(processed)
+            if processed_count == 0:
+                self.append_output("No commits were applied; aborting move.")
+                BranchManager.checkout(repo, state.current_branch)
+                if stashed:
+                    try:
+                        WorkingTreeManager.pop_stash(repo)
+                    except GitManagerError:
+                        self.append_output("⚠️ Stash pop had conflicts or failed. Resolve manually.")
+                return
+
             self.append_output(f"📜 Latest moved commits on {state.base_branch} (with author info):\n")
-            latest_log = GitOperations.run_git(["log", "-n", str(num), "--no-decorate", "--date=iso", "--pretty=format:  %h  %ad  %an <%ae>"], cwd=repo)
+            latest_log = GitOperations.run_git(["log", "-n", str(processed_count), "--no-decorate", "--date=iso", "--pretty=format:  %h  %ad  %an <%ae>"], cwd=repo)
             self.append_output(latest_log + "\n")
 
             # ===== Pre-push validation =====
@@ -467,29 +585,30 @@ class GitManagerGUI:
                     break
 
             # 2) Ensure author date day equals today's day for all moved commits
-            dates = GitOperations.run_git(["log", "-n", str(num), "--date=short", "--pretty=format:%ad"], cwd=repo).splitlines()
+            dates = GitOperations.run_git(["log", "-n", str(processed_count), "--date=short", "--pretty=format:%ad"], cwd=repo).splitlines()
             today_str = now_iso()[:10]
             bad_dates = [d for d in dates if d and d != today_str]
             if bad_dates:
                 raise GitManagerError(f"Found {len(bad_dates)} commit(s) with author date not equal to today")
 
             # 3) Ensure author email matches local git config (so GitHub can attribute contributions)
-            emails = GitOperations.run_git(["log", "-n", str(num), "--pretty=format:%ae"], cwd=repo).splitlines()
-            names = GitOperations.run_git(["log", "-n", str(num), "--pretty=format:%an"], cwd=repo).splitlines()
+            emails = GitOperations.run_git(["log", "-n", str(processed_count), "--pretty=format:%ae"], cwd=repo).splitlines()
+            names = GitOperations.run_git(["log", "-n", str(processed_count), "--pretty=format:%an"], cwd=repo).splitlines()
             if any(e and e != expected_email for e in emails):
                 raise GitManagerError(f"Found commit(s) with author email not matching '{expected_email}'")
             if any(n and n != expected_name for n in names):
                 raise GitManagerError(f"Found commit(s) with author name not matching '{expected_name}'")
 
-            self.append_output(f"✅ All {num} commits have correct author info (will be attributed to {expected_name} <{expected_email}>)\n")
+            self.append_output(f"✅ All {processed_count} commits have correct author info (will be attributed to {expected_name} <{expected_email}>)\n")
             self.append_output(f"🚀 Pushing to origin {state.base_branch}...\n")
             GitOperations.run_git(["push", "origin", state.base_branch], cwd=repo)
-            self.append_output(f"✅ Done! {num} commits moved with date/time {now_iso_value}\n")
+            self.append_output(f"✅ Done! {processed_count} commits moved with date/time {now_iso_value}\n")
 
             # ===== Clean up local_commit ONLY AFTER successful push =====
+            backup_branch = self._backup_local_commit(repo)
             remaining = GitOperations.run_git(["rev-list", "--reverse", f"{state.base_branch}..local_commit"], cwd=repo).strip().splitlines()
             if remaining:
-                self.append_output(f"⚠️  You moved {num} of {pending} commits.\n")
+                self.append_output(f"⚠️  You moved {processed_count} of {pending} commits.\n")
                 self.append_output(f"🔄 Rewriting local_commit to keep only remaining commits...\n")
                 BranchManager.checkout(repo, "local_commit")
                 GitOperations.run_git(["reset", "--hard", state.base_branch], cwd=repo)
