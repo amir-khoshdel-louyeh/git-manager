@@ -183,7 +183,6 @@ class GitManagerGUI:
         ttk.Button(buttons, text="🔀 Switch Branch", command=self.action_switch, style="Action.TButton").pack(side=tk.LEFT, padx=4)
         ttk.Button(buttons, text="👁 Preview Commits", command=self.action_preview, style="Action.TButton").pack(side=tk.LEFT, padx=4)
         ttk.Button(buttons, text="🚀 Move Commits", command=self.action_move, style="Action.TButton").pack(side=tk.LEFT, padx=4)
-        ttk.Button(buttons, text="♻️ Restore local_commit", command=self.action_restore, style="Action.TButton").pack(side=tk.LEFT, padx=4)
 
         # Split main content into resizable panes
         paned = ttk.PanedWindow(self.root, orient=tk.VERTICAL)
@@ -199,23 +198,21 @@ class GitManagerGUI:
         tree_container.pack(fill=tk.BOTH, expand=True)
         self.tree = ttk.Treeview(
             tree_container,
-            columns=("name", "local", "commits", "branch", "base"),
+            columns=("name", "commits", "branch", "base"),
             show="tree headings",
             selectmode="browse",
             height=12,
         )
         self.tree.heading("#0", text="")
         self.tree.heading("name", text="Repository")
-        self.tree.heading("local", text="local_commit")
         self.tree.heading("commits", text="Commits")
         self.tree.heading("branch", text="Current Branch")
         self.tree.heading("base", text="Base Branch")
         self.tree.column("#0", width=30, stretch=False)
         self.tree.column("name", width=250, anchor=tk.W)
-        self.tree.column("local", width=120, anchor=tk.CENTER)
         self.tree.column("commits", width=100, anchor=tk.CENTER)
-        self.tree.column("branch", width=200, anchor=tk.W)
-        self.tree.column("base", width=150, anchor=tk.W)
+        self.tree.column("branch", width=200, anchor=tk.CENTER)
+        self.tree.column("base", width=150, anchor=tk.CENTER)
         scrollbar = ttk.Scrollbar(tree_container, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -275,7 +272,6 @@ class GitManagerGUI:
                 iid=str(idx - 1),
                 values=(
                     state.name,
-                    "✓" if state.local_exists else "✗",
                     state.commit_count,
                     state.current_branch,
                     state.base_branch,
@@ -646,64 +642,6 @@ class GitManagerGUI:
         except GitManagerError as exc:
             self.append_output(f"\n❌ Error: {str(exc)}\n")
             messagebox.showerror("Operation Failed", "An error occurred. Check the output panel for details.")
-
-    def action_restore(self) -> None:
-        state = self.selected_state()
-        if not state:
-            return
-        repo = state.path
-        try:
-            if not messagebox.askyesno(
-                "Restore local_commit",
-                "This will restore local_commit to the last known good state from reflog.\n\nContinue?"
-            ):
-                return
-
-            self.append_output(f"♻️ Restoring local_commit from reflog...\n")
-            
-            # Get branch-specific reflog entries to find the last good local_commit state
-            # Use 'git reflog show local_commit' to get the branch's history
-            reflog = GitOperations.run_git(["reflog", "show", "local_commit", "-20"], cwd=repo)
-            local_commit_sha = None
-            
-            for line in reflog.splitlines():
-                # Look for entries that are NOT "branch: Created from" or "reset: moving to main"
-                if ("branch: Created from" not in line and 
-                    "reset: moving to main" not in line and
-                    "reset: moving to " + state.base_branch not in line):
-                    # Extract SHA from the line (format: SHA local_commit@{N}: action: message)
-                    parts = line.split()
-                    if parts:
-                        local_commit_sha = parts[0]
-                        break
-            
-            if not local_commit_sha:
-                raise GitManagerError("Could not find a valid local_commit state in reflog")
-            
-            # Restore local_commit
-            BranchManager.checkout(repo, "local_commit")
-            GitOperations.run_git(["reset", "--hard", local_commit_sha], cwd=repo)
-            
-            # Show how many commits we have
-            count = int(GitOperations.run_git(["rev-list", "--count", f"{state.base_branch}..local_commit"], cwd=repo).strip() or "0")
-            self.append_output(f"✅ Restored local_commit to {local_commit_sha[:7]}\n")
-            self.append_output(f"📊 Found {count} commits ahead of {state.base_branch}\n")
-            self.append_output(f"📜 Commits:\n")
-            log = GitOperations.run_git([
-                "log",
-                "--reverse",
-                "--no-decorate",
-                "--date=short",
-                "--pretty=format:  %h  %ad  %s",
-                f"{state.base_branch}..local_commit",
-            ], cwd=repo)
-            self.append_output(log + "\n")
-            
-            self.refresh_repos()
-        except GitManagerError as exc:
-            self.append_output(f"\n❌ Error: {str(exc)}\n")
-            messagebox.showerror("Operation Failed", "An error occurred. Check the output panel for details.")
-
 
 def main() -> None:
     root = tk.Tk()
