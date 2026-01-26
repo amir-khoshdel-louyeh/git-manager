@@ -444,13 +444,6 @@ class GitManagerGUI:
             if num is None:
                 return
 
-            step_mode = False
-            if num > 1:
-                step_mode = messagebox.askyesno(
-                    "Step through commits",
-                    "Apply commits one at a time with confirmation before each cherry-pick?",
-                )
-
             stashed = False
             if not WorkingTreeManager.is_clean(repo):
                 if not messagebox.askyesno(
@@ -475,14 +468,10 @@ class GitManagerGUI:
 
             BranchManager.checkout(repo, state.base_branch)
             now_iso_value = now_iso()
-            for commit in commits:
-                if step_mode:
-                    subject = GitOperations.run_git(["show", "-s", "--format=%s", commit], cwd=repo).strip()
-                    if not messagebox.askyesno(
-                        "Move commit",
-                        f"Move commit {commit[:7]}\n{subject}\n\nApply this commit?",
-                    ):
-                        break
+            for idx, commit in enumerate(commits):
+                remaining = len(commits) - idx - 1
+                subject = GitOperations.run_git(["show", "-s", "--format=%s", commit], cwd=repo).strip()
+                self.append_output(f"📌 Processing {idx + 1}/{len(commits)}: {commit[:7]} '{subject}' ({remaining} remaining)...\n")
                 try:
                     GitOperations.run_git(["cherry-pick", "--no-commit", commit], cwd=repo)
                 except GitManagerError:
