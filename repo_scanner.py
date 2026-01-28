@@ -67,12 +67,33 @@ def _current_branch(repo: Path) -> str:
     return branch or "HEAD"
 
 
-def _pending_count(repo: Path, base_branch: str) -> int:
-    if not GitOperations.git_ok(["rev-parse", "--verify", "--quiet", "local_commit"], cwd=repo):
-        return 0
+def _pending_count(repo: Path, base_branch: str, current_branch: str) -> int:
+    """Count commits ahead of base branch or remote on the current branch."""
+    # If we're on local_commit, show commits between base..local_commit
+    if current_branch == "local_commit":
+        if not GitOperations.git_ok(["rev-parse", "--verify", "--quiet", "local_commit"], cwd=repo):
+            return 0
+        if not GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{base_branch}"], cwd=repo):
+            return 0
+        out = GitOperations.run_git(["rev-list", "--count", f"{base_branch}..local_commit"], cwd=repo)
+        return int(out.strip() or "0")
+    
+    # If we're on the base branch (MAIN), show unpushed commits (ahead of origin)
+    if current_branch == base_branch:
+        if not GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{base_branch}"], cwd=repo):
+            return 0
+        # Check if remote tracking branch exists
+        if GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/remotes/origin/{base_branch}"], cwd=repo):
+            out = GitOperations.run_git(["rev-list", "--count", f"origin/{base_branch}..{base_branch}"], cwd=repo)
+            return int(out.strip() or "0")
+        # If no remote, show total commits on the branch
+        out = GitOperations.run_git(["rev-list", "--count", base_branch], cwd=repo)
+        return int(out.strip() or "0")
+    
+    # For any other branch, show commits ahead of base
     if not GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{base_branch}"], cwd=repo):
         return 0
-    out = GitOperations.run_git(["rev-list", "--count", f"{base_branch}..local_commit"], cwd=repo)
+    out = GitOperations.run_git(["rev-list", "--count", f"{base_branch}..{current_branch}"], cwd=repo)
     return int(out.strip() or "0")
 
 
@@ -97,7 +118,7 @@ class RepoScanner:
             local_exists = branch == "local_commit" or GitOperations.git_ok(
                 ["show-ref", "--verify", "--quiet", "refs/heads/local_commit"], cwd=child
             )
-            count = _pending_count(child, base_branch) if local_exists else 0
+            count = _pending_count(child, base_branch, branch)
 
             states.append(
                 RepoState(
