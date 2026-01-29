@@ -603,13 +603,19 @@ class GitManagerGUI:
 
             # ===== Clean up local_commit ONLY AFTER successful push =====
             backup_branch = self._backup_local_commit(repo)
-            remaining = GitOperations.run_git(["rev-list", "--reverse", f"{state.base_branch}..local_commit"], cwd=repo).strip().splitlines()
-            if remaining:
+            
+            # Check if we moved all commits or only some
+            if processed_count < pending:
+                # Some commits remain on local_commit - need to rewrite it
+                # Get the remaining commits BEFORE any changes (using original SHAs)
+                remaining_original = commits[processed_count:]  # The commits we didn't process
+                
                 self.append_output(f"⚠️  You moved {processed_count} of {pending} commits.\n")
-                self.append_output(f"🔄 Rewriting local_commit to keep only remaining commits...\n")
+                self.append_output(f"🔄 Rewriting local_commit to keep only {len(remaining_original)} remaining commits...\n")
                 BranchManager.checkout(repo, "local_commit")
                 GitOperations.run_git(["reset", "--hard", state.base_branch], cwd=repo)
-                for commit in remaining:
+                
+                for commit in remaining_original:
                     try:
                         GitOperations.run_git(["cherry-pick", commit], cwd=repo)
                     except GitManagerError:
@@ -626,6 +632,7 @@ class GitManagerGUI:
                         )
                 self.append_output("✅ local_commit updated to reflect remaining commits.\n")
             else:
+                # All commits were moved - simply sync local_commit to base
                 self.append_output(f"🔄 Syncing local_commit to {state.base_branch}...\n")
                 BranchManager.checkout(repo, "local_commit")
                 GitOperations.run_git(["reset", "--hard", state.base_branch], cwd=repo)
