@@ -644,7 +644,20 @@ class GitManagerGUI:
 
 def main() -> None:
     root = tk.Tk()
-    root.attributes('-zoomed', True)  # Fullscreen on Linux
+    
+    # Get screen dimensions and maximize
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+    root.geometry(f"{screen_width}x{screen_height}+0+0")
+    root.attributes('-zoomed', True)  # Maximize window with controls
+
+    def _toggle_fullscreen(event: tk.Event | None = None) -> None:
+        is_fullscreen = bool(root.attributes('-fullscreen'))
+        root.attributes('-fullscreen', not is_fullscreen)
+
+    root.bind('<F11>', _toggle_fullscreen)
+    root.bind('<Escape>', lambda e: root.attributes('-fullscreen', False))
+
     gui = GitManagerGUI(root)
     root.mainloop()
 
