@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext, simpledialog
+from tkinter import ttk, messagebox, scrolledtext, simpledialog, filedialog
 from pathlib import Path
 from typing import List, Optional
 from datetime import datetime
@@ -168,9 +168,7 @@ class GitManagerGUI:
         top = ttk.Frame(self.root, padding=10)
         top.pack(fill=tk.X, padx=12, pady=12)
 
-        ttk.Label(top, text="📁 Base directory:", font=("Helvetica", 11, "bold")).pack(side=tk.LEFT, padx=(0, 8))
-        entry = ttk.Entry(top, textvariable=self.base_var, width=70, font=("Helvetica", 10))
-        entry.pack(side=tk.LEFT, padx=4)
+        ttk.Label(top, text="Git Manager", font=("Helvetica", 12, "bold")).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(top, text="🔄 Refresh", command=self.refresh_repos).pack(side=tk.LEFT, padx=8)
 
         # Action buttons with better styling
@@ -183,6 +181,7 @@ class GitManagerGUI:
         ttk.Button(buttons, text="🔀 Switch Branch", command=self.action_switch, style="Action.TButton").pack(side=tk.LEFT, padx=4)
         ttk.Button(buttons, text="👁 Preview Commits", command=self.action_preview, style="Action.TButton").pack(side=tk.LEFT, padx=4)
         ttk.Button(buttons, text="🚀 Move Commits", command=self.action_move, style="Action.TButton").pack(side=tk.LEFT, padx=4)
+        ttk.Button(buttons, text="📁 Base directory", command=self.action_change_base_directory, style="Action.TButton").pack(side=tk.LEFT, padx=4)
 
         # Split main content into resizable panes
         paned = ttk.PanedWindow(self.root, orient=tk.VERTICAL)
@@ -378,6 +377,17 @@ class GitManagerGUI:
         if idx < 0 or idx >= len(self.states):
             return None
         return self.states[idx]
+
+    def action_change_base_directory(self) -> None:
+        new_dir = filedialog.askdirectory(
+            parent=self.root,
+            title="Select Base Directory",
+            initialdir=self.base_var.get(),
+        )
+        if not new_dir:
+            return
+        self.base_var.set(new_dir)
+        self.refresh_repos()
 
     def action_switch(self) -> None:
         state = self.selected_state()
