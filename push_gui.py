@@ -14,6 +14,7 @@ from branch_manager import BranchManager
 from working_tree_manager import WorkingTreeManager
 from git_config import GitConfig
 from repo_scanner import RepoScanner
+from settings_db import SettingsDB
 
 
 # ============================================================================
@@ -153,7 +154,12 @@ class GitManagerGUI:
         self.root.title("Git Manager - Repository Management Tool")
         self.root.configure(bg="#f0f0f0")
 
-        self.base_var = tk.StringVar(value=str(DEFAULT_BASE_DIR))
+        # Initialize settings database
+        self.db = SettingsDB()
+        saved_base = self.db.get_base_directory()
+        initial_base = saved_base if saved_base else str(DEFAULT_BASE_DIR)
+        
+        self.base_var = tk.StringVar(value=initial_base)
         self.states: List[RepoState] = []
 
         self._build_layout()
@@ -387,6 +393,8 @@ class GitManagerGUI:
         if not new_dir:
             return
         self.base_var.set(new_dir)
+        self.db.set_base_directory(new_dir)
+        self.append_output(f"💾 Saved base directory: {new_dir}\n")
         self.refresh_repos()
 
     def action_switch(self) -> None:
