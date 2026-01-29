@@ -170,20 +170,14 @@ class GitManagerGUI:
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def _build_layout(self) -> None:
-        # Header frame with better styling
-        top = ttk.Frame(self.root, padding=10)
-        top.pack(fill=tk.X, padx=12, pady=12)
-
-        ttk.Label(top, text="Git Manager", font=("Helvetica", 12, "bold")).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(top, text="🔄 Refresh", command=self.refresh_repos).pack(side=tk.LEFT, padx=8)
-
         # Action buttons with better styling
         buttons = ttk.Frame(self.root, padding=8)
-        buttons.pack(fill=tk.X, padx=12, pady=(0, 12))
+        buttons.pack(fill=tk.X, padx=12, pady=12)
         
         style = ttk.Style()
         style.configure("Action.TButton", font=("Helvetica", 10, "bold"), padding=8)
         
+        ttk.Button(buttons, text="🔄 Refresh", command=self.refresh_repos, style="Action.TButton").pack(side=tk.LEFT, padx=4)
         ttk.Button(buttons, text="🔀 Switch Branch", command=self.action_switch, style="Action.TButton").pack(side=tk.LEFT, padx=4)
         ttk.Button(buttons, text="👁 Preview Commits", command=self.action_preview, style="Action.TButton").pack(side=tk.LEFT, padx=4)
         ttk.Button(buttons, text="🚀 Move Commits", command=self.action_move, style="Action.TButton").pack(side=tk.LEFT, padx=4)
