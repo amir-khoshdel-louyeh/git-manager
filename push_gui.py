@@ -457,6 +457,7 @@ class GitManagerGUI:
                 return
 
             stashed = False
+            original_branch = GitOperations.run_git(["branch", "--show-current"], cwd=repo).strip() or "HEAD"
             if not WorkingTreeManager.is_clean(repo):
                 if not messagebox.askyesno(
                     "Uncommitted Changes",
@@ -468,9 +469,10 @@ class GitManagerGUI:
                 WorkingTreeManager.stash(repo, f"git-manager auto-stash before moving commits ({now_display()})")
                 stashed = True
 
-            commits = GitOperations.run_git(["rev-list", "--reverse", f"{state.base_branch}..local_commit"], cwd=repo).strip().splitlines()[:num]
-            if not commits:
+            all_commits = GitOperations.run_git(["rev-list", "--reverse", f"{state.base_branch}..local_commit"], cwd=repo).strip().splitlines()
+            if not all_commits:
                 raise GitManagerError("No commits to process")
+            commits = all_commits[:num]  # Only process the first num commits
             processed: list[str] = []
 
             self.append_output(f"🕒 Rewriting commits with current user info...\n")
@@ -608,7 +610,7 @@ class GitManagerGUI:
             if processed_count < pending:
                 # Some commits remain on local_commit - need to rewrite it
                 # Get the remaining commits BEFORE any changes (using original SHAs)
-                remaining_original = commits[processed_count:]  # The commits we didn't process
+                remaining_original = all_commits[processed_count:]  # The commits we didn't process
                 
                 self.append_output(f"⚠️  You moved {processed_count} of {pending} commits.\n")
                 self.append_output(f"🔄 Rewriting local_commit to keep only {len(remaining_original)} remaining commits...\n")
@@ -639,8 +641,8 @@ class GitManagerGUI:
                 self.append_output(f"✅ local_commit is now aligned with {state.base_branch}\n")
 
             if stashed:
-                self.append_output(f"🔧 Restoring stashed changes to {state.current_branch}...\n")
-                BranchManager.checkout(repo, state.current_branch)
+                self.append_output(f"🔧 Restoring stashed changes to {original_branch}...\n")
+                BranchManager.checkout(repo, original_branch)
                 try:
                     WorkingTreeManager.pop_stash(repo)
                 except GitManagerError:
