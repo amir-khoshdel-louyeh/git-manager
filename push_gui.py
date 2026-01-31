@@ -326,18 +326,18 @@ class GitManagerGUI:
         if (git_dir / "MERGE_HEAD").exists():
             try:
                 GitOperations.run_git(["merge", "--abort"], cwd=repo)
-            except GitManagerError:
-                self.append_output("⚠️  Could not abort merge cleanly; please resolve manually.")
+            except GitManagerError as exc:
+                self.append_output(f"⚠️  Could not abort merge cleanly: {str(exc)}\n")
         if (git_dir / "CHERRY_PICK_HEAD").exists():
             try:
                 GitOperations.run_git(["cherry-pick", "--abort"], cwd=repo)
-            except GitManagerError:
-                self.append_output("⚠️  Could not abort cherry-pick cleanly; please resolve manually.")
+            except GitManagerError as exc:
+                self.append_output(f"⚠️  Could not abort cherry-pick cleanly: {str(exc)}\n")
         if (git_dir / "rebase-merge").exists():
             try:
                 GitOperations.run_git(["rebase", "--abort"], cwd=repo)
-            except GitManagerError:
-                self.append_output("⚠️  Could not abort rebase cleanly; please resolve manually.")
+            except GitManagerError as exc:
+                self.append_output(f"⚠️  Could not abort rebase cleanly: {str(exc)}\n")
 
     def _choose_conflict_resolution(self, commit: str, conflicts: str) -> str:
         prompt = (
@@ -364,8 +364,8 @@ class GitManagerGUI:
         try:
             GitOperations.run_git(["branch", backup_name, "local_commit"], cwd=repo)
             self.append_output(f"🛟 Created {backup_name} from local_commit before rewrite")
-        except GitManagerError:
-            self.append_output("⚠️  Failed to create backup branch; proceeding without backup")
+        except GitManagerError as exc:
+            self.append_output(f"⚠️  Failed to create backup branch: {str(exc)}\n")
         return backup_name
 
     def selected_state(self) -> Optional[RepoState]:
@@ -435,11 +435,19 @@ class GitManagerGUI:
         if not state:
             return
         repo = state.path
+        base_branch = state.base_branch
+        temp_branch: str | None = None
+        base_before: str | None = None
+        local_before: str | None = None
+        stashed = False
+        original_branch = "HEAD"
         try:
             GitConfig.ensure_identity(repo)
             if not GitOperations.git_ok(["rev-parse", "--verify", "--quiet", "local_commit"], cwd=repo):
                 raise GitManagerError("local_commit does not exist")
-            pending = int(GitOperations.run_git(["rev-list", "--count", f"{state.base_branch}..local_commit"], cwd=repo).strip() or "0")
+            base_before = GitOperations.run_git(["rev-parse", "--verify", base_branch], cwd=repo).strip()
+            local_before = GitOperations.run_git(["rev-parse", "--verify", "local_commit"], cwd=repo).strip()
+            pending = int(GitOperations.run_git(["rev-list", "--count", f"{base_branch}..local_commit"], cwd=repo).strip() or "0")
             if pending == 0:
                 messagebox.showinfo("No commits", "No commits to move.")
                 return
@@ -456,7 +464,6 @@ class GitManagerGUI:
             if num is None:
                 return
 
-            stashed = False
             original_branch = GitOperations.run_git(["branch", "--show-current"], cwd=repo).strip() or "HEAD"
             if not WorkingTreeManager.is_clean(repo):
                 if not messagebox.askyesno(
@@ -469,7 +476,7 @@ class GitManagerGUI:
                 WorkingTreeManager.stash(repo, f"git-manager auto-stash before moving commits ({now_display()})")
                 stashed = True
 
-            all_commits = GitOperations.run_git(["rev-list", "--reverse", f"{state.base_branch}..local_commit"], cwd=repo).strip().splitlines()
+            all_commits = GitOperations.run_git(["rev-list", "--reverse", f"{base_branch}..local_commit"], cwd=repo).strip().splitlines()
             if not all_commits:
                 raise GitManagerError("No commits to process")
             commits = all_commits[:num]  # Only process the first num commits
@@ -480,7 +487,9 @@ class GitManagerGUI:
             expected_name = GitOperations.run_git(["config", "user.name"], cwd=repo).strip()
             self.append_output(f"⚠️  All commits will be authored by: {expected_name} <{expected_email}>\n")
 
-            BranchManager.checkout(repo, state.base_branch)
+            temp_branch = f"tmp_git_manager_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            GitOperations.run_git(["branch", temp_branch, base_before], cwd=repo)
+            BranchManager.checkout(repo, temp_branch)
             now_iso_value = now_iso()
             for idx, commit in enumerate(commits):
                 remaining = len(commits) - idx - 1
@@ -540,9 +549,9 @@ class GitManagerGUI:
                         continue
                     raise
 
-                # Check if there are any changes to commit (handle empty commits after successful --no-commit)
-                status = GitOperations.run_git(["status", "--short"], cwd=repo).strip()
-                if not status:
+                # Check if there are any staged changes to commit (ignore untracked files)
+                has_staged_changes = not GitOperations.git_ok(["diff", "--cached", "--quiet"], cwd=repo)
+                if not has_staged_changes:
                     self.append_output(f"⊘ Skipping empty commit {commit[:7]} (already applied)\n")
                     continue
 
@@ -558,16 +567,16 @@ class GitManagerGUI:
             processed_count = len(processed)
             if processed_count == 0:
                 self.append_output("No commits were applied; aborting move.")
-                BranchManager.checkout(repo, state.current_branch)
+                BranchManager.checkout(repo, original_branch)
                 if stashed:
                     try:
                         WorkingTreeManager.pop_stash(repo)
-                    except GitManagerError:
-                        self.append_output("⚠️ Stash pop had conflicts or failed. Resolve manually.")
+                    except GitManagerError as exc:
+                        self.append_output(f"⚠️ Stash pop failed: {str(exc)}\nResolve manually with 'git stash pop'\n")
                 return
 
-            self.append_output(f"📜 Latest moved commits on {state.base_branch} (with author info):\n")
-            latest_log = GitOperations.run_git(["log", "-n", str(processed_count), "--no-decorate", "--date=iso", "--pretty=format:  %h  %ad  %an <%ae>"], cwd=repo)
+            self.append_output(f"📜 Latest moved commits on {base_branch} (with author info):\n")
+            latest_log = GitOperations.run_git(["log", "-n", str(processed_count), temp_branch, "--no-decorate", "--date=iso", "--pretty=format:  %h  %ad  %an <%ae>"], cwd=repo)
             self.append_output(latest_log + "\n")
 
             # ===== Pre-push validation =====
@@ -577,31 +586,34 @@ class GitManagerGUI:
             for line in default_head.splitlines():
                 if "HEAD branch:" in line:
                     remote_head = line.split(":", 1)[1].strip()
-                    if remote_head and remote_head != state.base_branch:
+                    if remote_head and remote_head != base_branch:
                         raise GitManagerError(
-                            f"Remote default branch is '{remote_head}', but target is '{state.base_branch}'."
+                            f"Remote default branch is '{remote_head}', but target is '{base_branch}'."
                         )
                     break
 
             # 2) Ensure author date day equals today's day for all moved commits
-            dates = GitOperations.run_git(["log", "-n", str(processed_count), "--date=short", "--pretty=format:%ad"], cwd=repo).splitlines()
+            dates = GitOperations.run_git(["log", "-n", str(processed_count), temp_branch, "--date=short", "--pretty=format:%ad"], cwd=repo).splitlines()
             today_str = now_iso()[:10]
             bad_dates = [d for d in dates if d and d != today_str]
             if bad_dates:
                 raise GitManagerError(f"Found {len(bad_dates)} commit(s) with author date not equal to today")
 
             # 3) Ensure author email matches local git config (so GitHub can attribute contributions)
-            emails = GitOperations.run_git(["log", "-n", str(processed_count), "--pretty=format:%ae"], cwd=repo).splitlines()
-            names = GitOperations.run_git(["log", "-n", str(processed_count), "--pretty=format:%an"], cwd=repo).splitlines()
+            emails = GitOperations.run_git(["log", "-n", str(processed_count), temp_branch, "--pretty=format:%ae"], cwd=repo).splitlines()
+            names = GitOperations.run_git(["log", "-n", str(processed_count), temp_branch, "--pretty=format:%an"], cwd=repo).splitlines()
             if any(e and e != expected_email for e in emails):
                 raise GitManagerError(f"Found commit(s) with author email not matching '{expected_email}'")
             if any(n and n != expected_name for n in names):
                 raise GitManagerError(f"Found commit(s) with author name not matching '{expected_name}'")
 
             self.append_output(f"✅ All {processed_count} commits have correct author info (will be attributed to {expected_name} <{expected_email}>)\n")
-            self.append_output(f"🚀 Pushing to origin {state.base_branch}...\n")
-            GitOperations.run_git(["push", "origin", state.base_branch], cwd=repo)
+            self.append_output(f"🚀 Pushing to origin {base_branch}...\n")
+            GitOperations.run_git(["push", "origin", f"{temp_branch}:{base_branch}"], cwd=repo)
             self.append_output(f"✅ Done! {processed_count} commits moved with date/time {now_iso_value}\n")
+
+            BranchManager.checkout(repo, base_branch)
+            GitOperations.run_git(["reset", "--hard", temp_branch], cwd=repo)
 
             # ===== Clean up local_commit ONLY AFTER successful push =====
             backup_branch = self._backup_local_commit(repo)
@@ -615,7 +627,7 @@ class GitManagerGUI:
                 self.append_output(f"⚠️  You moved {processed_count} of {pending} commits.\n")
                 self.append_output(f"🔄 Rewriting local_commit to keep only {len(remaining_original)} remaining commits...\n")
                 BranchManager.checkout(repo, "local_commit")
-                GitOperations.run_git(["reset", "--hard", state.base_branch], cwd=repo)
+                GitOperations.run_git(["reset", "--hard", base_branch], cwd=repo)
                 
                 for commit in remaining_original:
                     try:
@@ -624,7 +636,7 @@ class GitManagerGUI:
                         # Check if it's an empty commit (already applied)
                         status = GitOperations.run_git(["status"], cwd=repo)
                         if "nothing to commit" in status:
-                            self.append_output(f"⊘ Skipping empty commit {commit[:7]} (already on {state.base_branch})\n")
+                            self.append_output(f"⊘ Skipping empty commit {commit[:7]} (already on {base_branch})\n")
                             GitOperations.run_git(["cherry-pick", "--skip"], cwd=repo)
                             continue
                         # Otherwise abort and raise error
@@ -635,22 +647,54 @@ class GitManagerGUI:
                 self.append_output("✅ local_commit updated to reflect remaining commits.\n")
             else:
                 # All commits were moved - simply sync local_commit to base
-                self.append_output(f"🔄 Syncing local_commit to {state.base_branch}...\n")
+                self.append_output(f"🔄 Syncing local_commit to {base_branch}...\n")
                 BranchManager.checkout(repo, "local_commit")
-                GitOperations.run_git(["reset", "--hard", state.base_branch], cwd=repo)
-                self.append_output(f"✅ local_commit is now aligned with {state.base_branch}\n")
+                GitOperations.run_git(["reset", "--hard", base_branch], cwd=repo)
+                self.append_output(f"✅ local_commit is now aligned with {base_branch}\n")
 
             if stashed:
                 self.append_output(f"🔧 Restoring stashed changes to {original_branch}...\n")
                 BranchManager.checkout(repo, original_branch)
                 try:
                     WorkingTreeManager.pop_stash(repo)
-                except GitManagerError:
-                    self.append_output("⚠️ Stash pop had conflicts or failed. Resolve manually.")
+                except GitManagerError as exc:
+                    self.append_output(f"⚠️ Stash pop failed: {str(exc)}\nResolve manually with 'git stash pop'\n")
 
+            if temp_branch and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{temp_branch}"], cwd=repo):
+                GitOperations.run_git(["branch", "-D", temp_branch], cwd=repo)
+                temp_branch = None
             self.refresh_repos()
         except GitManagerError as exc:
             self.append_output(f"\n❌ Error: {str(exc)}\n")
+            if temp_branch or base_before or local_before:
+                self.append_output("↩️ Rolling back to previous state...\n")
+                try:
+                    self._abort_in_progress_ops(repo)
+                except GitManagerError:
+                    pass
+                if base_before and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{base_branch}"], cwd=repo):
+                    try:
+                        BranchManager.checkout(repo, base_branch)
+                        GitOperations.run_git(["reset", "--hard", base_before], cwd=repo)
+                    except GitManagerError:
+                        pass
+                if local_before and GitOperations.git_ok(["show-ref", "--verify", "--quiet", "refs/heads/local_commit"], cwd=repo):
+                    try:
+                        BranchManager.checkout(repo, "local_commit")
+                        GitOperations.run_git(["reset", "--hard", local_before], cwd=repo)
+                    except GitManagerError:
+                        pass
+                if temp_branch and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{temp_branch}"], cwd=repo):
+                    try:
+                        GitOperations.run_git(["branch", "-D", temp_branch], cwd=repo)
+                    except GitManagerError:
+                        pass
+                if stashed:
+                    try:
+                        BranchManager.checkout(repo, original_branch)
+                        WorkingTreeManager.pop_stash(repo)
+                    except GitManagerError:
+                        self.append_output("⚠️ Rollback stash pop failed. Resolve manually with 'git stash pop'\n")
             messagebox.showerror("Operation Failed", "An error occurred. Check the output panel for details.")
 
 def main() -> None:
