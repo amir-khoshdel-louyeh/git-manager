@@ -22,10 +22,42 @@ def _detect_base_branch(repo: Path, current_branch: str) -> str:
     )
     if origin_head and origin_head != "HEAD":
         return origin_head.removeprefix("origin/")
+
+    # If no main/master/origin default exists yet, create a real main branch when safe.
+    created_main = _ensure_main_branch(repo, current_branch)
+    if created_main:
+        return created_main
+
     if current_branch and current_branch not in {"HEAD", "local_commit"} and GitOperations.git_ok(
         ["show-ref", "--verify", "--quiet", f"refs/heads/{current_branch}"], cwd=repo
     ):
         return current_branch
+    return ""
+
+
+def _ensure_main_branch(repo: Path, current_branch: str) -> str:
+    """Create a real main branch from a safe existing branch if needed."""
+    if GitOperations.git_ok(["show-ref", "--verify", "--quiet", "refs/heads/main"], cwd=repo):
+        return "main"
+
+    if GitOperations.git_ok(["show-ref", "--verify", "--quiet", "refs/heads/master"], cwd=repo):
+        try:
+            GitOperations.run_git(["branch", "main", "master"], cwd=repo)
+            return "main"
+        except GitManagerError:
+            return "master"
+
+    if current_branch and current_branch not in {"HEAD", "local_commit"}:
+        branch_list = GitOperations.run_git(
+            ["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+            cwd=repo,
+        ).splitlines()
+        if len(branch_list) == 1 and branch_list[0] == current_branch:
+            try:
+                GitOperations.run_git(["branch", "main", current_branch], cwd=repo)
+                return "main"
+            except GitManagerError:
+                pass
     return ""
 
 
