@@ -142,6 +142,70 @@ class NumericKeypadDialog(tk.Toplevel):
         self.result = None
         self.destroy()
 
+
+class CommitDialog(tk.Toplevel):
+    """Dialog for commit message and add options."""
+
+    def __init__(self, parent: tk.Tk, repo_name: str) -> None:
+        super().__init__(parent)
+        self.title(f"Make a Commit - {repo_name}")
+        self.resizable(False, False)
+        self.result: Optional[tuple[str, str, str]] = None
+
+        self.transient(parent)
+        self.grab_set()
+
+        ttk.Label(self, text="Commit message:", font=("Helvetica", 10, "bold"))
+        self.message_text = tk.Text(self, width=70, height=8, wrap=tk.WORD, font=("Helvetica", 10))
+        self.message_text.pack(padx=20, pady=(4, 10), fill=tk.BOTH)
+
+        self.add_mode = tk.StringVar(value="all")
+        add_frame = ttk.LabelFrame(self, text="Add scope", padding=10)
+        add_frame.pack(fill=tk.X, padx=20, pady=(0, 10))
+
+        ttk.Radiobutton(add_frame, text="All changes (tracked + untracked)", variable=self.add_mode, value="all").pack(anchor=tk.W, pady=2)
+        ttk.Radiobutton(add_frame, text="Tracked changes only", variable=self.add_mode, value="tracked").pack(anchor=tk.W, pady=2)
+
+        specific_frame = ttk.Frame(add_frame)
+        specific_frame.pack(fill=tk.X, pady=(8, 0))
+        ttk.Radiobutton(specific_frame, text="Specific paths:", variable=self.add_mode, value="paths").pack(side=tk.LEFT, anchor=tk.N)
+        self.pathspec_var = tk.StringVar()
+        self.pathspec_entry = ttk.Entry(specific_frame, textvariable=self.pathspec_var, width=48)
+        self.pathspec_entry.pack(side=tk.LEFT, padx=8, fill=tk.X, expand=True)
+
+        button_frame = ttk.Frame(self)
+        button_frame.pack(pady=10)
+        ttk.Button(button_frame, text="Commit", command=self._on_ok).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=self._on_cancel).pack(side=tk.LEFT, padx=5)
+
+        self.bind("<Return>", lambda e: self._on_ok())
+        self.bind("<Escape>", lambda e: self._on_cancel())
+
+        self.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_width() // 2)
+        y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.winfo_height() // 2)
+        self.geometry(f"+{x}+{y}")
+
+    def _on_ok(self) -> None:
+        message = self.message_text.get("1.0", tk.END).strip()
+        if not message:
+            messagebox.showerror("Commit message required", "Please enter a commit message.", parent=self)
+            return
+
+        add_mode = self.add_mode.get()
+        pathspec = self.pathspec_var.get().strip()
+        if add_mode == "paths" and not pathspec:
+            messagebox.showerror("Pathspec required", "Please specify one or more file paths for the commit.", parent=self)
+            return
+
+        self.result = (message, add_mode, pathspec)
+        self.destroy()
+
+    def _on_cancel(self) -> None:
+        self.result = None
+        self.destroy()
+
+
 # ============================================================================
 # GUI APPLICATION
 # ============================================================================
@@ -180,7 +244,8 @@ class GitManagerGUI:
         ttk.Button(buttons, text="🔄 Refresh", command=self.refresh_repos, style="Action.TButton").pack(side=tk.LEFT, padx=4)
         ttk.Button(buttons, text="🔀 Switch Branch", command=self.action_switch, style="Action.TButton").pack(side=tk.LEFT, padx=4)
         ttk.Button(buttons, text="👁 Preview Commits", command=self.action_preview, style="Action.TButton").pack(side=tk.LEFT, padx=4)
-        ttk.Button(buttons, text="🚀 Move Commits", command=self.action_move, style="Action.TButton").pack(side=tk.LEFT, padx=4)
+        ttk.Button(buttons, text="� Make a Commit", command=self.action_make_commit, style="Action.TButton").pack(side=tk.LEFT, padx=4)
+        ttk.Button(buttons, text="�🚀 Move Commits", command=self.action_move, style="Action.TButton").pack(side=tk.LEFT, padx=4)
         ttk.Button(buttons, text="📁 Base directory", command=self.action_change_base_directory, style="Action.TButton").pack(side=tk.LEFT, padx=4)
 
         # Split main content into resizable panes
@@ -429,6 +494,48 @@ class GitManagerGUI:
         except GitManagerError as exc:
             self.append_output(f"\n❌ Error: {str(exc)}\n")
             messagebox.showerror("Operation Failed", "An error occurred. Check the output panel for details.")
+
+    def action_make_commit(self) -> None:
+        state = self.selected_state()
+        if not state:
+            return
+
+        repo = state.path
+        try:
+            GitConfig.ensure_identity(repo)
+
+            if GitOperations.git_ok(["diff", "--quiet"], cwd=repo) and GitOperations.git_ok(["diff", "--cached", "--quiet"], cwd=repo):
+                messagebox.showinfo("No changes", "There are no changes to commit in the selected repository.")
+                return
+
+            dialog = CommitDialog(self.root, state.name)
+            self.root.wait_window(dialog)
+            if dialog.result is None:
+                return
+
+            message, add_mode, pathspec = dialog.result
+            self.append_output(f"📝 Preparing commit in {state.name}...\n")
+
+            if add_mode == "all":
+                self.append_output("   • Staging all changes (tracked + untracked)\n")
+                GitOperations.run_git(["add", "-A"], cwd=repo)
+            elif add_mode == "tracked":
+                self.append_output("   • Staging tracked changes only\n")
+                GitOperations.run_git(["add", "-u"], cwd=repo)
+            else:
+                self.append_output(f"   • Staging specified paths: {pathspec}\n")
+                GitOperations.run_git(["add", *pathspec.split()], cwd=repo)
+
+            if GitOperations.git_ok(["diff", "--cached", "--quiet"], cwd=repo):
+                messagebox.showinfo("Nothing staged", "No changes were staged for commit. Adjust the add scope and try again.")
+                return
+
+            GitOperations.run_git(["commit", "-m", message.strip()], cwd=repo)
+            self.append_output(f"✅ Commit created in {state.name}: {message.strip()}")
+            self.refresh_repos()
+        except GitManagerError as exc:
+            self.append_output(f"\n❌ Error: {str(exc)}\n")
+            messagebox.showerror("Commit Failed", "An error occurred while committing. Check the output panel for details.")
 
     def action_move(self) -> None:
         state = self.selected_state()
