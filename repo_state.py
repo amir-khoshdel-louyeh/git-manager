@@ -14,3 +14,4 @@ class RepoState:
     current_branch: str
     local_exists: bool
     commit_count: int
+    dirty: bool

@@ -109,6 +109,12 @@ def _pending_count(repo: Path, base_branch: str, current_branch: str) -> int:
     return int(out.strip() or "0")
 
 
+def _has_uncommitted_changes(repo: Path) -> bool:
+    """Return True if the repository has unstaged, staged, or untracked changes."""
+    status = GitOperations.run_git(["status", "--porcelain"], cwd=repo)
+    return bool(status.strip())
+
+
 class RepoScanner:
     """Scan a base directory for git repositories and compute their state."""
 
@@ -138,6 +144,7 @@ class RepoScanner:
                     current_branch=branch,
                     local_exists=local_exists,
                     commit_count=count,
+                    dirty=_has_uncommitted_changes(child),
                 )
             )
         return states

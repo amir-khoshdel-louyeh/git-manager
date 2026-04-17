@@ -329,13 +329,14 @@ class GitManagerGUI:
             # Add visual indicators
             icon = "📦" if state.local_exists else "📁"
             tag = "has_commits" if state.commit_count > 0 else "clean"
+            repo_name = f"{state.name}{' ★' if state.dirty else ''}"
             
             self.tree.insert(
                 "",
                 tk.END,
                 iid=str(idx - 1),
                 values=(
-                    state.name,
+                    repo_name,
                     state.commit_count,
                     state.current_branch,
                     state.base_branch,
