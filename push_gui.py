@@ -206,6 +206,49 @@ class CommitDialog(tk.Toplevel):
         self.destroy()
 
 
+class PreviewModeDialog(tk.Toplevel):
+    """Dialog asking whether to preview pushed or unpushed commits."""
+
+    def __init__(self, parent: tk.Tk) -> None:
+        super().__init__(parent)
+        self.title("Preview Commits")
+        self.resizable(False, False)
+        self.result: Optional[str] = None
+
+        self.transient(parent)
+        self.grab_set()
+
+        ttk.Label(self, text="Which commits would you like to preview?", font=("Helvetica", 11, "bold"), wraplength=360).pack(padx=20, pady=(16, 8))
+
+        button_frame = ttk.Frame(self)
+        button_frame.pack(padx=20, pady=(0, 16), fill=tk.X)
+
+        ttk.Button(button_frame, text="Pushed commits", command=self._on_pushed, width=18).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Unpushed commits", command=self._on_unpushed, width=18).pack(side=tk.LEFT, padx=5)
+
+        cancel_frame = ttk.Frame(self)
+        cancel_frame.pack(padx=20, pady=(0, 16), fill=tk.X)
+        ttk.Button(cancel_frame, text="Cancel", command=self._on_cancel).pack(side=tk.RIGHT)
+
+        self.bind("<Escape>", lambda e: self._on_cancel())
+        self.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_width() // 2)
+        y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.winfo_height() // 2)
+        self.geometry(f"+{x}+{y}")
+
+    def _on_pushed(self) -> None:
+        self.result = "pushed"
+        self.destroy()
+
+    def _on_unpushed(self) -> None:
+        self.result = "unpushed"
+        self.destroy()
+
+    def _on_cancel(self) -> None:
+        self.result = None
+        self.destroy()
+
+
 # ============================================================================
 # GUI APPLICATION
 # ============================================================================
@@ -478,11 +521,80 @@ class GitManagerGUI:
             self.append_output(f"\n❌ Error: {str(exc)}\n")
             messagebox.showerror("Operation Failed", "An error occurred. Check the output panel for details.")
 
+    def _resolve_upstream(self, repo: Path, branch: str, base_branch: str) -> Optional[str]:
+        try:
+            upstream = GitOperations.run_git(
+                ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+                cwd=repo,
+            ).strip()
+            if upstream:
+                return upstream
+        except GitManagerError:
+            pass
+
+        if branch and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/remotes/origin/{branch}"], cwd=repo):
+            return f"origin/{branch}"
+
+        if branch == base_branch and base_branch and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/remotes/origin/{base_branch}"], cwd=repo):
+            return f"origin/{base_branch}"
+
+        if GitOperations.git_ok(["rev-parse", "--verify", "--quiet", "origin/HEAD"], cwd=repo):
+            origin_head = GitOperations.run_git(["rev-parse", "--abbrev-ref", "origin/HEAD"], cwd=repo).strip()
+            if origin_head and origin_head != "HEAD":
+                return origin_head
+
+        return None
+
     def action_preview(self) -> None:
         state = self.selected_state()
         if not state:
             return
+
+        dialog = PreviewModeDialog(self.root)
+        self.root.wait_window(dialog)
+        if dialog.result is None:
+            return
+
+        mode = dialog.result
+        branch = state.current_branch
+        upstream = self._resolve_upstream(state.path, branch, state.base_branch)
+
         try:
+            if mode == "unpushed":
+                if branch == "local_commit":
+                    if not state.base_branch:
+                        raise GitManagerError("Cannot preview unpushed commits for local_commit without a configured base branch.")
+                    if GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/remotes/origin/{state.base_branch}"], cwd=state.path):
+                        remote_base = f"origin/{state.base_branch}"
+                    elif GitOperations.git_ok(["rev-parse", "--verify", "--quiet", "origin/HEAD"], cwd=state.path):
+                        remote_base = GitOperations.run_git(["rev-parse", "--abbrev-ref", "origin/HEAD"], cwd=state.path).strip()
+                    else:
+                        raise GitManagerError("No remote base branch found for local_commit preview.")
+                    log_range = f"{remote_base}..local_commit"
+                    title = f"Unpushed commits on local_commit relative to {remote_base}"
+                else:
+                    if upstream:
+                        log_range = f"{upstream}..{branch}"
+                    elif GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/remotes/origin/{branch}"], cwd=state.path):
+                        log_range = f"origin/{branch}..{branch}"
+                    elif branch == state.base_branch and state.base_branch and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/remotes/origin/{state.base_branch}"], cwd=state.path):
+                        log_range = f"origin/{state.base_branch}..{state.base_branch}"
+                    else:
+                        raise GitManagerError("Current branch has no upstream or remote tracking branch to compare for unpushed commits.")
+                    title = f"Unpushed commits on {branch}"
+            else:
+                if upstream:
+                    log_range = upstream
+                elif branch == state.base_branch and state.base_branch and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/remotes/origin/{state.base_branch}"], cwd=state.path):
+                    log_range = f"origin/{state.base_branch}"
+                elif GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/remotes/origin/{branch}"], cwd=state.path):
+                    log_range = f"origin/{branch}"
+                elif branch == "local_commit" and state.base_branch and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/remotes/origin/{state.base_branch}"], cwd=state.path):
+                    log_range = f"origin/{state.base_branch}"
+                else:
+                    raise GitManagerError("Current branch has no upstream or remote branch to display pushed commits.")
+                title = f"Pushed commits on {log_range}"
+
             log = GitOperations.run_git(
                 [
                     "log",
@@ -490,11 +602,14 @@ class GitManagerGUI:
                     "--no-decorate",
                     "--date=short",
                     "--pretty=format:  %h  %ad  %s",
-                    f"{state.base_branch}..local_commit",
+                    log_range,
                 ],
                 cwd=state.path,
             )
-            self.append_output(f"Commits for {state.name}:\n{log}\n")
+            if not log.strip():
+                self.append_output(f"No {mode} commits found for {state.name}.\n")
+                return
+            self.append_output(f"{title} for {state.name}:\n{log}\n")
         except GitManagerError as exc:
             self.append_output(f"\n❌ Error: {str(exc)}\n")
             messagebox.showerror("Operation Failed", "An error occurred. Check the output panel for details.")
