@@ -262,21 +262,23 @@ class GitManagerGUI:
         tree_container.pack(fill=tk.BOTH, expand=True)
         self.tree = ttk.Treeview(
             tree_container,
-            columns=("name", "commits", "branch", "base"),
+            columns=("name", "commits", "pushed", "branch", "base"),
             show="tree headings",
             selectmode="browse",
             height=12,
         )
         self.tree.heading("#0", text="")
         self.tree.heading("name", text="Repository")
-        self.tree.heading("commits", text="Commits")
+        self.tree.heading("commits", text="Pending")
+        self.tree.heading("pushed", text="Pushed")
         self.tree.heading("branch", text="Current Branch")
         self.tree.heading("base", text="Base Branch")
         self.tree.column("#0", width=30, stretch=False)
         self.tree.column("name", width=250, anchor=tk.W)
-        self.tree.column("commits", width=100, anchor=tk.CENTER)
-        self.tree.column("branch", width=200, anchor=tk.CENTER)
-        self.tree.column("base", width=150, anchor=tk.CENTER)
+        self.tree.column("commits", width=90, anchor=tk.CENTER)
+        self.tree.column("pushed", width=90, anchor=tk.CENTER)
+        self.tree.column("branch", width=170, anchor=tk.CENTER)
+        self.tree.column("base", width=140, anchor=tk.CENTER)
         scrollbar = ttk.Scrollbar(tree_container, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -338,6 +340,7 @@ class GitManagerGUI:
                 values=(
                     repo_name,
                     state.commit_count,
+                    state.pushed_count,
                     state.current_branch,
                     state.base_branch,
                 ),

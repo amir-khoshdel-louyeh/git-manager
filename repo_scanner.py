@@ -115,6 +115,23 @@ def _has_uncommitted_changes(repo: Path) -> bool:
     return bool(status.strip())
 
 
+def _pushed_count(repo: Path, base_branch: str) -> int:
+    """Return the number of commits pushed to the remote base branch, when available."""
+    if base_branch and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/remotes/origin/{base_branch}"], cwd=repo):
+        out = GitOperations.run_git(["rev-list", "--count", f"origin/{base_branch}"], cwd=repo)
+        return int(out.strip() or "0")
+
+    if GitOperations.git_ok(["show-ref", "--verify", "--quiet", "refs/remotes/origin/HEAD"], cwd=repo):
+        out = GitOperations.run_git(["rev-list", "--count", "origin/HEAD"], cwd=repo)
+        return int(out.strip() or "0")
+
+    if GitOperations.git_ok(["rev-parse", "--verify", "--quiet", "refs/remotes/origin"], cwd=repo):
+        out = GitOperations.run_git(["rev-list", "--count", "--remotes=origin"], cwd=repo)
+        return int(out.strip() or "0")
+
+    return 0
+
+
 class RepoScanner:
     """Scan a base directory for git repositories and compute their state."""
 
@@ -144,6 +161,7 @@ class RepoScanner:
                     current_branch=branch,
                     local_exists=local_exists,
                     commit_count=count,
+                    pushed_count=_pushed_count(child, base_branch),
                     dirty=_has_uncommitted_changes(child),
                 )
             )
