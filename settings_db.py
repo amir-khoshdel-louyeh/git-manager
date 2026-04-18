@@ -63,7 +63,15 @@ class SettingsDB:
     def get_base_directory(self) -> Optional[str]:
         """Get the saved base directory."""
         return self.get("base_directory")
-    
+
     def set_base_directory(self, path: str) -> None:
         """Save the base directory."""
         self.set("base_directory", path)
+
+    def get_auto_switch_local_commit(self) -> bool:
+        """Return whether local_commit should be selected on startup."""
+        return self.get("auto_switch_local_commit", default="1") == "1"
+
+    def set_auto_switch_local_commit(self, enabled: bool) -> None:
+        """Save auto-switch-on-startup preference."""
+        self.set("auto_switch_local_commit", "1" if enabled else "0")

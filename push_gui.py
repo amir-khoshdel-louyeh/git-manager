@@ -250,7 +250,7 @@ class PreviewModeDialog(tk.Toplevel):
 class ResetDialog(tk.Toplevel):
     """Dialog to select a reset target commit and reset type."""
 
-    def __init__(self, parent: tk.Tk, repo_name: str, default_commit: str = "284bef8") -> None:
+    def __init__(self, parent: tk.Tk, repo_name: str) -> None:
         super().__init__(parent)
         self.title(f"Reset {repo_name}")
         self.resizable(False, False)
@@ -260,7 +260,7 @@ class ResetDialog(tk.Toplevel):
         self.grab_set()
 
         ttk.Label(self, text="Reset target commit or ref:", font=("Helvetica", 10, "bold")).pack(anchor=tk.W, padx=20, pady=(16, 4))
-        self.target_var = tk.StringVar(value=default_commit)
+        self.target_var = tk.StringVar(value="")
         ttk.Entry(self, textvariable=self.target_var, width=56).pack(padx=20, pady=(0, 12), fill=tk.X)
 
         ttk.Label(self, text="Reset type:", font=("Helvetica", 10, "bold")).pack(anchor=tk.W, padx=20, pady=(0, 4))
@@ -296,10 +296,57 @@ class ResetDialog(tk.Toplevel):
     def _on_cancel(self) -> None:
         self.result = None
         self.destroy()
-        self.destroy()
 
-    def _on_unpushed(self) -> None:
-        self.result = "unpushed"
+
+class SettingsDialog(tk.Toplevel):
+    """Dialog for changing application settings."""
+
+    def __init__(self, parent: tk.Tk, base_directory: str, auto_switch: bool) -> None:
+        super().__init__(parent)
+        self.title("Settings")
+        self.resizable(False, False)
+        self.result: Optional[tuple[str, bool]] = None
+
+        self.transient(parent)
+        self.grab_set()
+
+        ttk.Label(self, text="Base directory:", font=("Helvetica", 10, "bold")).pack(anchor=tk.W, padx=20, pady=(16, 4))
+        self.base_var = tk.StringVar(value=base_directory)
+        entry_frame = ttk.Frame(self)
+        entry_frame.pack(fill=tk.X, padx=20)
+        ttk.Entry(entry_frame, textvariable=self.base_var, width=48).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(entry_frame, text="Browse", command=self._browse_base_dir).pack(side=tk.LEFT, padx=(8, 0))
+
+        self.auto_switch_var = tk.BooleanVar(value=auto_switch)
+        ttk.Checkbutton(self, text="Auto switch to local_commit on startup", variable=self.auto_switch_var).pack(anchor=tk.W, padx=20, pady=(12, 0))
+
+        ttk.Label(self, text="Other settings will appear here as the tool evolves.", font=("Helvetica", 9), foreground="#555").pack(anchor=tk.W, padx=20, pady=(10, 0))
+
+        button_frame = ttk.Frame(self)
+        button_frame.pack(pady=16)
+        ttk.Button(button_frame, text="Save", command=self._on_ok).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=self._on_cancel).pack(side=tk.LEFT, padx=5)
+
+        self.bind("<Return>", lambda e: self._on_ok())
+        self.bind("<Escape>", lambda e: self._on_cancel())
+
+        self.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_width() // 2)
+        y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.winfo_height() // 2)
+        self.geometry(f"+{x}+{y}")
+
+    def _browse_base_dir(self) -> None:
+        new_dir = filedialog.askdirectory(parent=self, title="Select Base Directory", initialdir=self.base_var.get())
+        if new_dir:
+            self.base_var.set(new_dir)
+
+    def _on_ok(self) -> None:
+        base = self.base_var.get().strip()
+        if not base:
+            messagebox.showerror("Base directory required", "Please choose a base directory.", parent=self)
+            return
+
+        self.result = (base, self.auto_switch_var.get())
         self.destroy()
 
     def _on_cancel(self) -> None:
@@ -323,13 +370,15 @@ class GitManagerGUI:
         self.db = SettingsDB()
         saved_base = self.db.get_base_directory()
         initial_base = saved_base if saved_base else str(DEFAULT_BASE_DIR)
-        
+        self.auto_switch_to_local_commit = self.db.get_auto_switch_local_commit()
+
         self.base_var = tk.StringVar(value=initial_base)
         self.states: List[RepoState] = []
 
         self._build_layout()
         self.refresh_repos()
-        self.switch_all_to_local_commit()
+        if self.auto_switch_to_local_commit:
+            self.switch_all_to_local_commit()
         
         # Register cleanup on window close
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -348,7 +397,7 @@ class GitManagerGUI:
         ttk.Button(buttons, text="📝 Make a Commit", command=self.action_make_commit, style="Action.TButton").pack(side=tk.LEFT, padx=4)
         ttk.Button(buttons, text="🚀 Move Commits", command=self.action_move, style="Action.TButton").pack(side=tk.LEFT, padx=4)
         ttk.Button(buttons, text="🔁 Reset", command=self.action_reset, style="Action.TButton").pack(side=tk.LEFT, padx=4)
-        ttk.Button(buttons, text="📁 Base directory", command=self.action_change_base_directory, style="Action.TButton").pack(side=tk.LEFT, padx=4)
+        ttk.Button(buttons, text="⚙️ Settings", command=self.action_settings, style="Action.TButton").pack(side=tk.LEFT, padx=4)
 
         # Split main content into resizable panes
         paned = ttk.PanedWindow(self.root, orient=tk.VERTICAL)
@@ -562,6 +611,27 @@ class GitManagerGUI:
         self.append_output(f"💾 Saved base directory: {new_dir}\n")
         self.refresh_repos()
 
+    def action_settings(self) -> None:
+        dialog = SettingsDialog(
+            self.root,
+            self.base_var.get(),
+            self.auto_switch_to_local_commit,
+        )
+        self.root.wait_window(dialog)
+        if dialog.result is None:
+            return
+
+        new_base, auto_switch = dialog.result
+        self.base_var.set(new_base)
+        self.auto_switch_to_local_commit = auto_switch
+        self.db.set_base_directory(new_base)
+        self.db.set_auto_switch_local_commit(auto_switch)
+
+        self.append_output(f"💾 Settings saved. Base directory: {new_base}\n")
+        self.refresh_repos()
+        if auto_switch:
+            self.switch_all_to_local_commit()
+
     def action_switch(self) -> None:
         state = self.selected_state()
         if not state:
@@ -678,7 +748,7 @@ class GitManagerGUI:
         if not state:
             return
 
-        dialog = ResetDialog(self.root, state.name, default_commit="284bef8")
+        dialog = ResetDialog(self.root, state.name)
         self.root.wait_window(dialog)
         if dialog.result is None:
             return
