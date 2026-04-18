@@ -238,6 +238,64 @@ class PreviewModeDialog(tk.Toplevel):
 
     def _on_pushed(self) -> None:
         self.result = "pushed"
+
+    def _on_unpushed(self) -> None:
+        self.result = "unpushed"
+
+    def _on_cancel(self) -> None:
+        self.result = None
+        self.destroy()
+
+
+class ResetDialog(tk.Toplevel):
+    """Dialog to select a reset target commit and reset type."""
+
+    def __init__(self, parent: tk.Tk, repo_name: str, default_commit: str = "284bef8") -> None:
+        super().__init__(parent)
+        self.title(f"Reset {repo_name}")
+        self.resizable(False, False)
+        self.result: Optional[tuple[str, str]] = None
+
+        self.transient(parent)
+        self.grab_set()
+
+        ttk.Label(self, text="Reset target commit or ref:", font=("Helvetica", 10, "bold")).pack(anchor=tk.W, padx=20, pady=(16, 4))
+        self.target_var = tk.StringVar(value=default_commit)
+        ttk.Entry(self, textvariable=self.target_var, width=56).pack(padx=20, pady=(0, 12), fill=tk.X)
+
+        ttk.Label(self, text="Reset type:", font=("Helvetica", 10, "bold")).pack(anchor=tk.W, padx=20, pady=(0, 4))
+        self.reset_type = tk.StringVar(value="hard")
+        types_frame = ttk.Frame(self)
+        types_frame.pack(fill=tk.X, padx=20)
+        ttk.Radiobutton(types_frame, text="Hard", variable=self.reset_type, value="hard").pack(side=tk.LEFT, padx=4)
+        ttk.Radiobutton(types_frame, text="Mixed", variable=self.reset_type, value="mixed").pack(side=tk.LEFT, padx=4)
+        ttk.Radiobutton(types_frame, text="Soft", variable=self.reset_type, value="soft").pack(side=tk.LEFT, padx=4)
+
+        button_frame = ttk.Frame(self)
+        button_frame.pack(pady=16)
+        ttk.Button(button_frame, text="Reset", command=self._on_ok).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=self._on_cancel).pack(side=tk.LEFT, padx=5)
+
+        self.bind("<Return>", lambda e: self._on_ok())
+        self.bind("<Escape>", lambda e: self._on_cancel())
+
+        self.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_width() // 2)
+        y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.winfo_height() // 2)
+        self.geometry(f"+{x}+{y}")
+
+    def _on_ok(self) -> None:
+        target = self.target_var.get().strip()
+        if not target:
+            messagebox.showerror("Target required", "Please enter a commit hash or ref to reset to.", parent=self)
+            return
+
+        self.result = (target, self.reset_type.get())
+        self.destroy()
+
+    def _on_cancel(self) -> None:
+        self.result = None
+        self.destroy()
         self.destroy()
 
     def _on_unpushed(self) -> None:
@@ -287,8 +345,9 @@ class GitManagerGUI:
         ttk.Button(buttons, text="🔄 Refresh", command=self.refresh_repos, style="Action.TButton").pack(side=tk.LEFT, padx=4)
         ttk.Button(buttons, text="🔀 Switch Branch", command=self.action_switch, style="Action.TButton").pack(side=tk.LEFT, padx=4)
         ttk.Button(buttons, text="👁 Preview Commits", command=self.action_preview, style="Action.TButton").pack(side=tk.LEFT, padx=4)
-        ttk.Button(buttons, text="� Make a Commit", command=self.action_make_commit, style="Action.TButton").pack(side=tk.LEFT, padx=4)
-        ttk.Button(buttons, text="�🚀 Move Commits", command=self.action_move, style="Action.TButton").pack(side=tk.LEFT, padx=4)
+        ttk.Button(buttons, text="📝 Make a Commit", command=self.action_make_commit, style="Action.TButton").pack(side=tk.LEFT, padx=4)
+        ttk.Button(buttons, text="🚀 Move Commits", command=self.action_move, style="Action.TButton").pack(side=tk.LEFT, padx=4)
+        ttk.Button(buttons, text="🔁 Reset", command=self.action_reset, style="Action.TButton").pack(side=tk.LEFT, padx=4)
         ttk.Button(buttons, text="📁 Base directory", command=self.action_change_base_directory, style="Action.TButton").pack(side=tk.LEFT, padx=4)
 
         # Split main content into resizable panes
@@ -613,6 +672,33 @@ class GitManagerGUI:
         except GitManagerError as exc:
             self.append_output(f"\n❌ Error: {str(exc)}\n")
             messagebox.showerror("Operation Failed", "An error occurred. Check the output panel for details.")
+
+    def action_reset(self) -> None:
+        state = self.selected_state()
+        if not state:
+            return
+
+        dialog = ResetDialog(self.root, state.name, default_commit="284bef8")
+        self.root.wait_window(dialog)
+        if dialog.result is None:
+            return
+
+        target, reset_type = dialog.result
+        if reset_type == "hard" and not messagebox.askyesno(
+            "Confirm Hard Reset",
+            f"Hard reset will discard uncommitted changes and move the branch to {target}. Continue?",
+            parent=self.root,
+        ):
+            return
+
+        try:
+            self.append_output(f"🔁 Resetting {state.name} to {target} with --{reset_type}...\n")
+            GitOperations.run_git(["reset", f"--{reset_type}", target], cwd=state.path)
+            self.append_output(f"✅ Reset {state.name} to {target} with --{reset_type}\n")
+            self.refresh_repos()
+        except GitManagerError as exc:
+            self.append_output(f"\n❌ Error: {str(exc)}\n")
+            messagebox.showerror("Reset Failed", "An error occurred during reset. Check the output panel for details.")
 
     def action_make_commit(self) -> None:
         state = self.selected_state()
