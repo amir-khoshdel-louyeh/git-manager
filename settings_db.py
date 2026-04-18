@@ -1,65 +1,52 @@
-"""Settings database for persisting user preferences."""
-import sqlite3
+"""Settings file for persisting user preferences."""
+import json
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 
 class SettingsDB:
-    """Manage application settings using SQLite."""
-    
-    def __init__(self, db_path: Path | None = None) -> None:
-        """Initialize settings database.
-        
+    """Manage application settings using a JSON file."""
+
+    def __init__(self, file_path: Path | None = None) -> None:
+        """Initialize settings storage.
+
         Args:
-            db_path: Path to database file. Defaults to ~/.git-manager/settings.db
+            file_path: Path to settings JSON file. Defaults to ~/.git-manager/settings.json
         """
-        if db_path is None:
-            db_path = Path.home() / ".git-manager" / "settings.db"
-        
-        self.db_path = db_path
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_db()
-    
-    def _init_db(self) -> None:
-        """Initialize database schema."""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS settings (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                )
-            """)
-            conn.commit()
-    
+        if file_path is None:
+            file_path = Path.home() / ".git-manager" / "settings.json"
+
+        self.file_path = file_path
+        self.file_path.parent.mkdir(parents=True, exist_ok=True)
+        self._load_settings()
+
+    def _load_settings(self) -> None:
+        """Load settings from the JSON file."""
+        if self.file_path.exists():
+            try:
+                with self.file_path.open("r", encoding="utf-8") as handle:
+                    self.settings = json.load(handle)
+            except (json.JSONDecodeError, OSError):
+                self.settings = {}
+        else:
+            self.settings: Dict[str, Any] = {}
+            self._save_settings()
+
+    def _save_settings(self) -> None:
+        """Persist settings to the JSON file."""
+        with self.file_path.open("w", encoding="utf-8") as handle:
+            json.dump(self.settings, handle, indent=2, ensure_ascii=False)
+
     def get(self, key: str, default: Optional[str] = None) -> Optional[str]:
-        """Get a setting value.
-        
-        Args:
-            key: Setting key
-            default: Default value if key not found
-            
-        Returns:
-            Setting value or default
-        """
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
-            row = cursor.fetchone()
-            return row[0] if row else default
-    
+        """Get a setting value."""
+        value = self.settings.get(key, default)
+        return str(value) if value is not None else default
+
     def set(self, key: str, value: str) -> None:
-        """Set a setting value.
-        
-        Args:
-            key: Setting key
-            value: Setting value
-        """
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                INSERT INTO settings (key, value) VALUES (?, ?)
-                ON CONFLICT(key) DO UPDATE SET value = excluded.value
-            """, (key, value))
-            conn.commit()
-    
+        """Set a setting value."""
+        self.settings[key] = value
+        self._save_settings()
+
     def get_base_directory(self) -> Optional[str]:
         """Get the saved base directory."""
         return self.get("base_directory")
