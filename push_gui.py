@@ -33,20 +33,24 @@ def now_display() -> str:
 class NumericKeypadDialog(tk.Toplevel):
     """Custom dialog with numeric keypad for entering number of commits."""
     
-    def __init__(self, parent: tk.Tk, title: str, prompt: str, minvalue: int = 1, maxvalue: int = 100) -> None:
+    def __init__(self, parent: tk.Tk, title: str, prompt: str, minvalue: int = 1, maxvalue: int = 100, theme_mode: str = "light") -> None:
         super().__init__(parent)
         self.title(title)
         self.resizable(False, False)
         self.result: Optional[int] = None
         self.minvalue = minvalue
         self.maxvalue = maxvalue
+        self.theme_mode = theme_mode
+        
+        dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
+        self.configure(bg=dialog_bg)
         
         # Make it modal
         self.transient(parent)
         self.grab_set()
         
         # Prompt label
-        ttk.Label(self, text=prompt, font=("Helvetica", 11), justify=tk.CENTER).pack(pady=10, padx=20)
+        ttk.Label(self, text=prompt, font=("Helvetica", 11), justify=tk.CENTER, style="Dialog.TLabel").pack(pady=10, padx=20)
         
         # Display value
         self.value_var = tk.StringVar(value="0")
@@ -56,12 +60,13 @@ class NumericKeypadDialog(tk.Toplevel):
             font=("Helvetica", 14, "bold"),
             width=15,
             justify=tk.CENTER,
-            state="readonly"
+            state="readonly",
+            style="Dialog.TEntry",
         )
         display.pack(pady=10, padx=20)
         
         # Numeric keypad
-        keypad_frame = ttk.Frame(self)
+        keypad_frame = ttk.Frame(self, style="Dialog.TFrame")
         keypad_frame.pack(pady=10, padx=20)
         
         buttons = [
@@ -79,10 +84,10 @@ class NumericKeypadDialog(tk.Toplevel):
                 btn.pack(side=tk.LEFT, padx=2, pady=2)
         
         # OK and Cancel buttons
-        button_frame = ttk.Frame(self)
+        button_frame = ttk.Frame(self, style="Dialog.TFrame")
         button_frame.pack(pady=10)
-        ttk.Button(button_frame, text="OK", command=self._on_ok).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=self._on_cancel).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="OK", command=self._on_ok, style="Dialog.TButton").pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=self._on_cancel, style="Dialog.TButton").pack(side=tk.LEFT, padx=5)
         
         # Bind keyboard events
         self.bind("<Key-0>", lambda e: self._on_key("0"))
@@ -146,37 +151,41 @@ class NumericKeypadDialog(tk.Toplevel):
 class CommitDialog(tk.Toplevel):
     """Dialog for commit message and add options."""
 
-    def __init__(self, parent: tk.Tk, repo_name: str) -> None:
+    def __init__(self, parent: tk.Tk, repo_name: str, theme_mode: str = "light") -> None:
         super().__init__(parent)
         self.title(f"Make a Commit - {repo_name}")
         self.resizable(False, False)
         self.result: Optional[tuple[str, str, str]] = None
+        self.theme_mode = theme_mode
+
+        dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
+        self.configure(bg=dialog_bg)
 
         self.transient(parent)
         self.grab_set()
 
-        ttk.Label(self, text="Commit message:", font=("Helvetica", 10, "bold"))
-        self.message_text = tk.Text(self, width=70, height=8, wrap=tk.WORD, font=("Helvetica", 10))
+        ttk.Label(self, text="Commit message:", font=("Helvetica", 10, "bold"), style="Dialog.TLabel")
+        self.message_text = tk.Text(self, width=70, height=8, wrap=tk.WORD, font=("Helvetica", 10), bg="#1e2228" if theme_mode == "dark" else "#ffffff", fg="#e8e8e8" if theme_mode == "dark" else "#000000", insertbackground="#e8e8e8" if theme_mode == "dark" else "#000000")
         self.message_text.pack(padx=20, pady=(4, 10), fill=tk.BOTH)
 
         self.add_mode = tk.StringVar(value="all")
-        add_frame = ttk.LabelFrame(self, text="Add scope", padding=10)
+        add_frame = ttk.LabelFrame(self, text="Add scope", padding=10, style="Dialog.TLabelframe")
         add_frame.pack(fill=tk.X, padx=20, pady=(0, 10))
 
         ttk.Radiobutton(add_frame, text="All changes (tracked + untracked)", variable=self.add_mode, value="all").pack(anchor=tk.W, pady=2)
         ttk.Radiobutton(add_frame, text="Tracked changes only", variable=self.add_mode, value="tracked").pack(anchor=tk.W, pady=2)
 
-        specific_frame = ttk.Frame(add_frame)
+        specific_frame = ttk.Frame(add_frame, style="Dialog.TFrame")
         specific_frame.pack(fill=tk.X, pady=(8, 0))
         ttk.Radiobutton(specific_frame, text="Specific paths:", variable=self.add_mode, value="paths").pack(side=tk.LEFT, anchor=tk.N)
         self.pathspec_var = tk.StringVar()
-        self.pathspec_entry = ttk.Entry(specific_frame, textvariable=self.pathspec_var, width=48)
+        self.pathspec_entry = ttk.Entry(specific_frame, textvariable=self.pathspec_var, width=48, style="Dialog.TEntry")
         self.pathspec_entry.pack(side=tk.LEFT, padx=8, fill=tk.X, expand=True)
 
-        button_frame = ttk.Frame(self)
+        button_frame = ttk.Frame(self, style="Dialog.TFrame")
         button_frame.pack(pady=10)
-        ttk.Button(button_frame, text="Commit", command=self._on_ok).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=self._on_cancel).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Commit", command=self._on_ok, style="Dialog.TButton").pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=self._on_cancel, style="Dialog.TButton").pack(side=tk.LEFT, padx=5)
 
         self.bind("<Return>", lambda e: self._on_ok())
         self.bind("<Escape>", lambda e: self._on_cancel())
@@ -209,26 +218,30 @@ class CommitDialog(tk.Toplevel):
 class PreviewModeDialog(tk.Toplevel):
     """Dialog asking whether to preview pushed or unpushed commits."""
 
-    def __init__(self, parent: tk.Tk) -> None:
+    def __init__(self, parent: tk.Tk, theme_mode: str = "light") -> None:
         super().__init__(parent)
         self.title("Preview Commits")
         self.resizable(False, False)
         self.result: Optional[str] = None
+        self.theme_mode = theme_mode
+
+        dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
+        self.configure(bg=dialog_bg)
 
         self.transient(parent)
         self.grab_set()
 
-        ttk.Label(self, text="Which commits would you like to preview?", font=("Helvetica", 11, "bold"), wraplength=360).pack(padx=20, pady=(16, 8))
+        ttk.Label(self, text="Which commits would you like to preview?", font=("Helvetica", 11, "bold"), wraplength=360, style="Dialog.TLabel").pack(padx=20, pady=(16, 8))
 
-        button_frame = ttk.Frame(self)
+        button_frame = ttk.Frame(self, style="Dialog.TFrame")
         button_frame.pack(padx=20, pady=(0, 16), fill=tk.X)
 
-        ttk.Button(button_frame, text="Pushed commits", command=self._on_pushed, width=18).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Unpushed commits", command=self._on_unpushed, width=18).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Pushed commits", command=self._on_pushed, width=18, style="Dialog.TButton").pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Unpushed commits", command=self._on_unpushed, width=18, style="Dialog.TButton").pack(side=tk.LEFT, padx=5)
 
-        cancel_frame = ttk.Frame(self)
+        cancel_frame = ttk.Frame(self, style="Dialog.TFrame")
         cancel_frame.pack(padx=20, pady=(0, 16), fill=tk.X)
-        ttk.Button(cancel_frame, text="Cancel", command=self._on_cancel).pack(side=tk.RIGHT)
+        ttk.Button(cancel_frame, text="Cancel", command=self._on_cancel, style="Dialog.TButton").pack(side=tk.RIGHT)
 
         self.bind("<Escape>", lambda e: self._on_cancel())
         self.update_idletasks()
@@ -250,31 +263,35 @@ class PreviewModeDialog(tk.Toplevel):
 class ResetDialog(tk.Toplevel):
     """Dialog to select a reset target commit and reset type."""
 
-    def __init__(self, parent: tk.Tk, repo_name: str) -> None:
+    def __init__(self, parent: tk.Tk, repo_name: str, theme_mode: str = "light") -> None:
         super().__init__(parent)
         self.title(f"Reset {repo_name}")
         self.resizable(False, False)
         self.result: Optional[tuple[str, str]] = None
+        self.theme_mode = theme_mode
+
+        dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
+        self.configure(bg=dialog_bg)
 
         self.transient(parent)
         self.grab_set()
 
-        ttk.Label(self, text="Reset target commit or ref:", font=("Helvetica", 10, "bold")).pack(anchor=tk.W, padx=20, pady=(16, 4))
+        ttk.Label(self, text="Reset target commit or ref:", font=("Helvetica", 10, "bold"), style="Dialog.TLabel").pack(anchor=tk.W, padx=20, pady=(16, 4))
         self.target_var = tk.StringVar(value="")
-        ttk.Entry(self, textvariable=self.target_var, width=56).pack(padx=20, pady=(0, 12), fill=tk.X)
+        ttk.Entry(self, textvariable=self.target_var, width=56, style="Dialog.TEntry").pack(padx=20, pady=(0, 12), fill=tk.X)
 
-        ttk.Label(self, text="Reset type:", font=("Helvetica", 10, "bold")).pack(anchor=tk.W, padx=20, pady=(0, 4))
+        ttk.Label(self, text="Reset type:", font=("Helvetica", 10, "bold"), style="Dialog.TLabel").pack(anchor=tk.W, padx=20, pady=(0, 4))
         self.reset_type = tk.StringVar(value="hard")
-        types_frame = ttk.Frame(self)
+        types_frame = ttk.Frame(self, style="Dialog.TFrame")
         types_frame.pack(fill=tk.X, padx=20)
-        ttk.Radiobutton(types_frame, text="Hard", variable=self.reset_type, value="hard").pack(side=tk.LEFT, padx=4)
-        ttk.Radiobutton(types_frame, text="Mixed", variable=self.reset_type, value="mixed").pack(side=tk.LEFT, padx=4)
-        ttk.Radiobutton(types_frame, text="Soft", variable=self.reset_type, value="soft").pack(side=tk.LEFT, padx=4)
+        ttk.Radiobutton(types_frame, text="Hard", variable=self.reset_type, value="hard", style="Dialog.TRadiobutton").pack(side=tk.LEFT, padx=4)
+        ttk.Radiobutton(types_frame, text="Mixed", variable=self.reset_type, value="mixed", style="Dialog.TRadiobutton").pack(side=tk.LEFT, padx=4)
+        ttk.Radiobutton(types_frame, text="Soft", variable=self.reset_type, value="soft", style="Dialog.TRadiobutton").pack(side=tk.LEFT, padx=4)
 
-        button_frame = ttk.Frame(self)
+        button_frame = ttk.Frame(self, style="Dialog.TFrame")
         button_frame.pack(pady=16)
-        ttk.Button(button_frame, text="Reset", command=self._on_ok).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=self._on_cancel).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Reset", command=self._on_ok, style="Dialog.TButton").pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=self._on_cancel, style="Dialog.TButton").pack(side=tk.LEFT, padx=5)
 
         self.bind("<Return>", lambda e: self._on_ok())
         self.bind("<Escape>", lambda e: self._on_cancel())
@@ -301,11 +318,15 @@ class ResetDialog(tk.Toplevel):
 class SettingsDialog(tk.Toplevel):
     """Dialog for changing application settings."""
 
-    def __init__(self, parent: tk.Tk, base_directory: str, auto_switch: bool) -> None:
+    def __init__(self, parent: tk.Tk, base_directory: str, auto_switch: bool, theme_mode: str) -> None:
         super().__init__(parent)
         self.title("Settings")
         self.resizable(False, False)
-        self.result: Optional[tuple[str, bool]] = None
+        self.result: Optional[tuple[str, bool, str]] = None
+        self.theme_mode = theme_mode
+
+        dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
+        self.configure(bg=dialog_bg)
 
         self.transient(parent)
         self.grab_set()
@@ -318,14 +339,21 @@ class SettingsDialog(tk.Toplevel):
         ttk.Button(entry_frame, text="Browse", command=self._browse_base_dir).pack(side=tk.LEFT, padx=(8, 0))
 
         self.auto_switch_var = tk.BooleanVar(value=auto_switch)
-        ttk.Checkbutton(self, text="Auto switch to local_commit on startup", variable=self.auto_switch_var).pack(anchor=tk.W, padx=20, pady=(12, 0))
+        ttk.Checkbutton(self, text="Auto switch to local_commit on startup", variable=self.auto_switch_var, style="Dialog.TCheckbutton").pack(anchor=tk.W, padx=20, pady=(12, 0))
+
+        ttk.Label(self, text="Theme:", font=("Helvetica", 10, "bold"), style="Dialog.TLabel").pack(anchor=tk.W, padx=20, pady=(12, 4))
+        self.theme_mode = tk.StringVar(value=theme_mode)
+        theme_frame = ttk.Frame(self, style="Dialog.TFrame")
+        theme_frame.pack(fill=tk.X, padx=20)
+        ttk.Radiobutton(theme_frame, text="Light", variable=self.theme_mode, value="light", style="Dialog.TRadiobutton").pack(side=tk.LEFT, padx=4)
+        ttk.Radiobutton(theme_frame, text="Dark", variable=self.theme_mode, value="dark", style="Dialog.TRadiobutton").pack(side=tk.LEFT, padx=4)
 
         ttk.Label(self, text="Other settings will appear here as the tool evolves.", font=("Helvetica", 9), foreground="#555").pack(anchor=tk.W, padx=20, pady=(10, 0))
 
-        button_frame = ttk.Frame(self)
+        button_frame = ttk.Frame(self, style="Dialog.TFrame")
         button_frame.pack(pady=16)
-        ttk.Button(button_frame, text="Save", command=self._on_ok).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=self._on_cancel).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Save", command=self._on_ok, style="Dialog.TButton").pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=self._on_cancel, style="Dialog.TButton").pack(side=tk.LEFT, padx=5)
 
         self.bind("<Return>", lambda e: self._on_ok())
         self.bind("<Escape>", lambda e: self._on_cancel())
@@ -346,7 +374,7 @@ class SettingsDialog(tk.Toplevel):
             messagebox.showerror("Base directory required", "Please choose a base directory.", parent=self)
             return
 
-        self.result = (base, self.auto_switch_var.get())
+        self.result = (base, self.auto_switch_var.get(), self.theme_mode.get())
         self.destroy()
 
     def _on_cancel(self) -> None:
@@ -371,17 +399,104 @@ class GitManagerGUI:
         saved_base = self.db.get_base_directory()
         initial_base = saved_base if saved_base else str(DEFAULT_BASE_DIR)
         self.auto_switch_to_local_commit = self.db.get_auto_switch_local_commit()
+        self.theme_mode = self.db.get_theme_mode()
 
         self.base_var = tk.StringVar(value=initial_base)
         self.states: List[RepoState] = []
 
         self._build_layout()
+        self.apply_theme(self.theme_mode)
         self.refresh_repos()
         if self.auto_switch_to_local_commit:
             self.switch_all_to_local_commit()
         
         # Register cleanup on window close
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def apply_theme(self, mode: str) -> None:
+        style = ttk.Style()
+        if mode == "dark":
+            bg = "#141619"
+            frame_bg = "#1f242a"
+            text_bg = "#181c21"
+            fg = "#e4e6eb"
+            button_bg = "#2c3138"
+            button_active = "#3b4350"
+            heading_bg = "#232a33"
+            heading_fg = "#e8ebf0"
+            entry_bg = "#1e2228"
+            entry_fg = "#e8ebf0"
+            status_fg = "#8ab4f8"
+            tree_tag_has = "#2b3137"
+            tree_tag_clean = "#1e2228"
+            selected_bg = "#264a6c"
+            selected_fg = "#ffffff"
+        else:
+            bg = "#f0f0f0"
+            frame_bg = "#ffffff"
+            text_bg = "#ffffff"
+            fg = "#111111"
+            button_bg = "#e8e8e8"
+            button_active = "#d1d5db"
+            heading_bg = "#f4f4f4"
+            heading_fg = "#000000"
+            entry_bg = "#ffffff"
+            entry_fg = "#000000"
+            status_fg = "#0066cc"
+            tree_tag_has = "#fff9e6"
+            tree_tag_clean = "#f0f8ff"
+            selected_bg = "#cce5ff"
+            selected_fg = "#000000"
+
+        self.theme_mode = mode
+        self.root.configure(bg=bg)
+        style.configure("TFrame", background=frame_bg)
+        style.configure("TLabel", background=frame_bg, foreground=fg)
+        style.configure("TCheckbutton", background=frame_bg, foreground=fg)
+        style.configure("TRadiobutton", background=frame_bg, foreground=fg)
+        style.configure("TEntry", fieldbackground=entry_bg, foreground=entry_fg, background=entry_bg)
+        style.configure("TButton", background=button_bg, foreground=fg, borderwidth=1, focusthickness=3, focuscolor=button_active)
+        style.configure("Action.TButton", background=button_bg, foreground=fg)
+        style.map("Action.TButton",
+            background=[('active', button_active), ('pressed', button_active)],
+            foreground=[('disabled', '#888888')]
+        )
+        style.configure("Dialog.TFrame", background=frame_bg)
+        style.configure("Dialog.TLabel", background=frame_bg, foreground=fg)
+        style.configure("Dialog.TButton", background=button_bg, foreground=fg)
+        style.map("Dialog.TButton",
+            background=[('active', button_active), ('pressed', button_active)],
+            foreground=[('disabled', '#888888')]
+        )
+        style.configure("Dialog.TEntry", fieldbackground=entry_bg, foreground=entry_fg, background=entry_bg)
+        style.configure("Dialog.TLabelframe", background=frame_bg, foreground=fg)
+        style.configure("Dialog.TLabelframe.Label", background=frame_bg, foreground=fg)
+        style.configure("Dialog.TRadiobutton", background=frame_bg, foreground=fg)
+        style.map("Action.TButton",
+            background=[('active', button_active), ('pressed', button_active)],
+            foreground=[('disabled', '#888888')]
+        )
+        style.configure("Treeview", background=text_bg, fieldbackground=text_bg, foreground=fg, rowheight=28)
+        style.map("Treeview", background=[('selected', selected_bg)], foreground=[('selected', selected_fg)])
+        style.configure("Treeview.Heading", background=heading_bg, foreground=heading_fg, relief="raised")
+        style.configure("Horizontal.TScrollbar", background=frame_bg)
+        style.configure("Vertical.TScrollbar", background=frame_bg)
+
+        if hasattr(self, "output"):
+            self.output.configure(bg=text_bg, fg=fg, insertbackground=fg)
+
+        if hasattr(self, "status_label"):
+            self.status_label.configure(background=frame_bg, foreground=status_fg)
+
+        if hasattr(self, "status_var"):
+            self.status_var.set(self.status_var.get())
+
+        self._theme_tree_tags(tree_tag_has, tree_tag_clean)
+
+    def _theme_tree_tags(self, has_color: str, clean_color: str) -> None:
+        if hasattr(self, "tree"):
+            self.tree.tag_configure("has_commits", background=has_color)
+            self.tree.tag_configure("clean", background=clean_color)
 
     def _build_layout(self) -> None:
         # Action buttons with better styling
@@ -458,14 +573,13 @@ class GitManagerGUI:
         status_frame.pack(fill=tk.X, side=tk.BOTTOM)
         
         self.status_var = tk.StringVar(value="✓ Ready")
-        status_label = ttk.Label(
+        self.status_label = ttk.Label(
             status_frame,
             textvariable=self.status_var,
             anchor=tk.W,
             font=("Helvetica", 9),
-            foreground="#0066cc"
         )
-        status_label.pack(fill=tk.X)
+        self.status_label.pack(fill=tk.X)
 
     def refresh_repos(self) -> None:
         base_dir = Path(self.base_var.get()).expanduser()
@@ -500,8 +614,12 @@ class GitManagerGUI:
             )
         
         # Configure tag colors
-        self.tree.tag_configure("has_commits", background="#fff9e6")
-        self.tree.tag_configure("clean", background="#f0f8ff")
+        if self.theme_mode == "dark":
+            self.tree.tag_configure("has_commits", background="#333333")
+            self.tree.tag_configure("clean", background="#2b2b2b")
+        else:
+            self.tree.tag_configure("has_commits", background="#fff9e6")
+            self.tree.tag_configure("clean", background="#f0f8ff")
         
         self.status_var.set(f"✓ Loaded {len(states)} repositories from {base_dir}")
 
@@ -616,18 +734,22 @@ class GitManagerGUI:
             self.root,
             self.base_var.get(),
             self.auto_switch_to_local_commit,
+            self.theme_mode,
         )
         self.root.wait_window(dialog)
         if dialog.result is None:
             return
 
-        new_base, auto_switch = dialog.result
+        new_base, auto_switch, theme_mode = dialog.result
         self.base_var.set(new_base)
         self.auto_switch_to_local_commit = auto_switch
+        self.theme_mode = theme_mode
         self.db.set_base_directory(new_base)
         self.db.set_auto_switch_local_commit(auto_switch)
+        self.db.set_theme_mode(theme_mode)
 
         self.append_output(f"💾 Settings saved. Base directory: {new_base}\n")
+        self.apply_theme(self.theme_mode)
         self.refresh_repos()
         if auto_switch:
             self.switch_all_to_local_commit()
@@ -679,7 +801,7 @@ class GitManagerGUI:
         if not state:
             return
 
-        dialog = PreviewModeDialog(self.root)
+        dialog = PreviewModeDialog(self.root, self.theme_mode)
         self.root.wait_window(dialog)
         if dialog.result is None:
             return
@@ -748,7 +870,7 @@ class GitManagerGUI:
         if not state:
             return
 
-        dialog = ResetDialog(self.root, state.name)
+        dialog = ResetDialog(self.root, state.name, self.theme_mode)
         self.root.wait_window(dialog)
         if dialog.result is None:
             return
@@ -783,7 +905,7 @@ class GitManagerGUI:
                 messagebox.showinfo("No changes", "There are no changes to commit in the selected repository.")
                 return
 
-            dialog = CommitDialog(self.root, state.name)
+            dialog = CommitDialog(self.root, state.name, self.theme_mode)
             self.root.wait_window(dialog)
             if dialog.result is None:
                 return
@@ -840,6 +962,7 @@ class GitManagerGUI:
                 f"How many commits to move to {state.base_branch}?\n(1 to {pending})",
                 minvalue=1,
                 maxvalue=pending,
+                theme_mode=self.theme_mode,
             )
             self.root.wait_window(dialog)
             num = dialog.result

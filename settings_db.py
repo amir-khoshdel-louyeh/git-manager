@@ -62,3 +62,11 @@ class SettingsDB:
     def set_auto_switch_local_commit(self, enabled: bool) -> None:
         """Save auto-switch-on-startup preference."""
         self.set("auto_switch_local_commit", "1" if enabled else "0")
+
+    def get_theme_mode(self) -> str:
+        """Return the saved theme mode."""
+        return self.get("theme_mode", default="light")
+
+    def set_theme_mode(self, mode: str) -> None:
+        """Save the UI theme mode."""
+        self.set("theme_mode", mode)
