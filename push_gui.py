@@ -479,6 +479,10 @@ class GitManagerGUI:
         style.configure("Treeview", background=text_bg, fieldbackground=text_bg, foreground=fg, rowheight=28)
         style.map("Treeview", background=[('selected', selected_bg)], foreground=[('selected', selected_fg)])
         style.configure("Treeview.Heading", background=heading_bg, foreground=heading_fg, relief="raised")
+        style.map("Treeview.Heading",
+            background=[('active', heading_bg), ('pressed', heading_bg)],
+            foreground=[('active', heading_fg), ('pressed', heading_fg)]
+        )
         style.configure("Horizontal.TScrollbar", background=frame_bg)
         style.configure("Vertical.TScrollbar", background=frame_bg)
 
