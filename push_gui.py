@@ -432,21 +432,21 @@ class GitManagerGUI:
             selected_bg = "#264a6c"
             selected_fg = "#ffffff"
         else:
-            bg = "#f0f0f0"
-            frame_bg = "#ffffff"
-            text_bg = "#ffffff"
-            fg = "#111111"
-            button_bg = "#e8e8e8"
-            button_active = "#d1d5db"
-            heading_bg = "#f4f4f4"
-            heading_fg = "#000000"
-            entry_bg = "#ffffff"
-            entry_fg = "#000000"
-            status_fg = "#0066cc"
-            tree_tag_has = "#fff9e6"
-            tree_tag_clean = "#f0f8ff"
-            selected_bg = "#cce5ff"
-            selected_fg = "#000000"
+            bg = "#eef2f6"
+            frame_bg = "#f7f9fb"
+            text_bg = "#fafbff"
+            fg = "#1f2937"
+            button_bg = "#e2e8f0"
+            button_active = "#cbd5e1"
+            heading_bg = "#e6eef6"
+            heading_fg = "#111827"
+            entry_bg = "#f1f5f9"
+            entry_fg = "#111827"
+            status_fg = "#2563eb"
+            tree_tag_has = "#fdf2e9"
+            tree_tag_clean = "#eef4fb"
+            selected_bg = "#dbeafe"
+            selected_fg = "#0f172a"
 
         self.theme_mode = mode
         self.root.configure(bg=bg)
@@ -456,17 +456,29 @@ class GitManagerGUI:
         style.configure("TRadiobutton", background=frame_bg, foreground=fg)
         style.configure("TEntry", fieldbackground=entry_bg, foreground=entry_fg, background=entry_bg)
         style.configure("TButton", background=button_bg, foreground=fg, borderwidth=1, focusthickness=3, focuscolor=button_active)
+        style.map("TButton",
+            background=[('active', button_active), ('pressed', button_active), ('!disabled', button_bg)],
+            foreground=[('disabled', '#888888'), ('!disabled', fg)]
+        )
         style.configure("Action.TButton", background=button_bg, foreground=fg)
         style.map("Action.TButton",
-            background=[('active', button_active), ('pressed', button_active)],
-            foreground=[('disabled', '#888888')]
+            background=[('active', button_active), ('pressed', button_active), ('!disabled', button_bg)],
+            foreground=[('disabled', '#888888'), ('!disabled', fg)]
         )
         style.configure("Dialog.TFrame", background=frame_bg)
         style.configure("Dialog.TLabel", background=frame_bg, foreground=fg)
         style.configure("Dialog.TButton", background=button_bg, foreground=fg)
         style.map("Dialog.TButton",
-            background=[('active', button_active), ('pressed', button_active)],
-            foreground=[('disabled', '#888888')]
+            background=[('active', button_active), ('pressed', button_active), ('!disabled', button_bg)],
+            foreground=[('disabled', '#888888'), ('!disabled', fg)]
+        )
+        style.map("TCheckbutton",
+            background=[('active', frame_bg), ('pressed', frame_bg), ('!disabled', frame_bg)],
+            foreground=[('disabled', '#888888'), ('!disabled', fg)]
+        )
+        style.map("TRadiobutton",
+            background=[('active', frame_bg), ('pressed', frame_bg), ('!disabled', frame_bg)],
+            foreground=[('disabled', '#888888'), ('!disabled', fg)]
         )
         style.configure("Dialog.TEntry", fieldbackground=entry_bg, foreground=entry_fg, background=entry_bg)
         style.configure("Dialog.TLabelframe", background=frame_bg, foreground=fg)
@@ -510,13 +522,13 @@ class GitManagerGUI:
         style = ttk.Style()
         style.configure("Action.TButton", font=("Helvetica", 10, "bold"), padding=8)
         
-        ttk.Button(buttons, text="🔄 Refresh", command=self.refresh_repos, style="Action.TButton").pack(side=tk.LEFT, padx=4)
-        ttk.Button(buttons, text="🔀 Switch Branch", command=self.action_switch, style="Action.TButton").pack(side=tk.LEFT, padx=4)
-        ttk.Button(buttons, text="👁 Preview Commits", command=self.action_preview, style="Action.TButton").pack(side=tk.LEFT, padx=4)
-        ttk.Button(buttons, text="📝 Make a Commit", command=self.action_make_commit, style="Action.TButton").pack(side=tk.LEFT, padx=4)
-        ttk.Button(buttons, text="🚀 Move Commits", command=self.action_move, style="Action.TButton").pack(side=tk.LEFT, padx=4)
-        ttk.Button(buttons, text="🔁 Reset", command=self.action_reset, style="Action.TButton").pack(side=tk.LEFT, padx=4)
-        ttk.Button(buttons, text="⚙️ Settings", command=self.action_settings, style="Action.TButton").pack(side=tk.LEFT, padx=4)
+        ttk.Button(buttons, text="🔄 Refresh", command=self.refresh_repos, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+        ttk.Button(buttons, text="🔀 Switch Branch", command=self.action_switch, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+        ttk.Button(buttons, text="👁 Preview Commits", command=self.action_preview, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+        ttk.Button(buttons, text="📝 Make a Commit", command=self.action_make_commit, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+        ttk.Button(buttons, text="🚀 Move Commits", command=self.action_move, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+        ttk.Button(buttons, text="🔁 Reset", command=self.action_reset, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+        ttk.Button(buttons, text="⚙️ Settings", command=self.action_settings, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
 
         # Split main content into resizable panes
         paned = ttk.PanedWindow(self.root, orient=tk.VERTICAL)
@@ -543,7 +555,7 @@ class GitManagerGUI:
         self.tree.heading("pushed", text="Pushed")
         self.tree.heading("branch", text="Current Branch")
         self.tree.heading("base", text="Base Branch")
-        self.tree.column("#0", width=30, stretch=False)
+        self.tree.column("#0", width=60, stretch=False)
         self.tree.column("name", width=250, anchor=tk.W)
         self.tree.column("commits", width=90, anchor=tk.CENTER)
         self.tree.column("pushed", width=90, anchor=tk.CENTER)
@@ -597,10 +609,11 @@ class GitManagerGUI:
         for item in self.tree.get_children():
             self.tree.delete(item)
         for idx, state in enumerate(states, start=1):
-            # Add visual indicators
+            # Add visual indicators: icon + dirty marker in the first tree column
             icon = "📦" if state.local_exists else "📁"
             tag = "has_commits" if state.commit_count > 0 else "clean"
-            repo_name = f"{state.name}{' ★' if state.dirty else ''}"
+            first_col_text = f"{icon}{' ★' if state.dirty else ''}"
+            repo_name = state.name
             
             self.tree.insert(
                 "",
@@ -613,7 +626,7 @@ class GitManagerGUI:
                     state.current_branch,
                     state.base_branch,
                 ),
-                text=icon,
+                text=first_col_text,
                 tags=(tag,)
             )
         
