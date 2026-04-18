@@ -318,11 +318,11 @@ class ResetDialog(tk.Toplevel):
 class SettingsDialog(tk.Toplevel):
     """Dialog for changing application settings."""
 
-    def __init__(self, parent: tk.Tk, base_directory: str, auto_switch: bool, theme_mode: str) -> None:
+    def __init__(self, parent: tk.Tk, base_directory: str, auto_switch: bool, theme_mode: str, auto_refresh: bool, refresh_interval: int) -> None:
         super().__init__(parent)
         self.title("Settings")
         self.resizable(False, False)
-        self.result: Optional[tuple[str, bool, str]] = None
+        self.result: Optional[tuple[str, bool, str, bool, int]] = None
         self.theme_mode = theme_mode
 
         dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
@@ -331,24 +331,38 @@ class SettingsDialog(tk.Toplevel):
         self.transient(parent)
         self.grab_set()
 
-        ttk.Label(self, text="Base directory:", font=("Helvetica", 10, "bold")).pack(anchor=tk.W, padx=20, pady=(16, 4))
+        repo_frame = ttk.LabelFrame(self, text="Repository settings", style="Dialog.TLabelframe")
+        repo_frame.pack(fill=tk.X, padx=20, pady=(16, 8))
         self.base_var = tk.StringVar(value=base_directory)
-        entry_frame = ttk.Frame(self)
-        entry_frame.pack(fill=tk.X, padx=20)
+        entry_frame = ttk.Frame(repo_frame)
+        entry_frame.pack(fill=tk.X, padx=12, pady=12)
         ttk.Entry(entry_frame, textvariable=self.base_var, width=48).pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(entry_frame, text="Browse", command=self._browse_base_dir).pack(side=tk.LEFT, padx=(8, 0))
 
+        startup_frame = ttk.LabelFrame(self, text="Startup behavior", style="Dialog.TLabelframe")
+        startup_frame.pack(fill=tk.X, padx=20, pady=8)
         self.auto_switch_var = tk.BooleanVar(value=auto_switch)
-        ttk.Checkbutton(self, text="Auto switch to local_commit on startup", variable=self.auto_switch_var, style="Dialog.TCheckbutton").pack(anchor=tk.W, padx=20, pady=(12, 0))
+        ttk.Checkbutton(startup_frame, text="Auto switch to local_commit on startup", variable=self.auto_switch_var, style="Dialog.TCheckbutton").pack(anchor=tk.W, padx=12, pady=12)
 
-        ttk.Label(self, text="Theme:", font=("Helvetica", 10, "bold"), style="Dialog.TLabel").pack(anchor=tk.W, padx=20, pady=(12, 4))
+        refresh_frame = ttk.LabelFrame(self, text="Refresh settings", style="Dialog.TLabelframe")
+        refresh_frame.pack(fill=tk.X, padx=20, pady=8)
+        self.auto_refresh_var = tk.BooleanVar(value=auto_refresh)
+        ttk.Checkbutton(refresh_frame, text="Auto refresh repositories", variable=self.auto_refresh_var, style="Dialog.TCheckbutton").pack(anchor=tk.W, padx=12, pady=(12, 8))
+
+        interval_frame = ttk.Frame(refresh_frame, style="Dialog.TFrame")
+        interval_frame.pack(fill=tk.X, padx=12, pady=(0, 12))
+        ttk.Label(interval_frame, text="Refresh every", font=("Helvetica", 10), style="Dialog.TLabel").pack(side=tk.LEFT)
+        self.refresh_interval_var = tk.StringVar(value=str(refresh_interval))
+        ttk.Entry(interval_frame, textvariable=self.refresh_interval_var, width=6, style="Dialog.TEntry").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(interval_frame, text="minute(s)", font=("Helvetica", 10), style="Dialog.TLabel").pack(side=tk.LEFT, padx=(8, 0))
+
+        appearance_frame = ttk.LabelFrame(self, text="Appearance", style="Dialog.TLabelframe")
+        appearance_frame.pack(fill=tk.X, padx=20, pady=8)
         self.theme_mode = tk.StringVar(value=theme_mode)
-        theme_frame = ttk.Frame(self, style="Dialog.TFrame")
-        theme_frame.pack(fill=tk.X, padx=20)
+        theme_frame = ttk.Frame(appearance_frame, style="Dialog.TFrame")
+        theme_frame.pack(fill=tk.X, padx=12, pady=12)
         ttk.Radiobutton(theme_frame, text="Light", variable=self.theme_mode, value="light", style="Dialog.TRadiobutton").pack(side=tk.LEFT, padx=4)
         ttk.Radiobutton(theme_frame, text="Dark", variable=self.theme_mode, value="dark", style="Dialog.TRadiobutton").pack(side=tk.LEFT, padx=4)
-
-        ttk.Label(self, text="Other settings will appear here as the tool evolves.", font=("Helvetica", 9), foreground="#555").pack(anchor=tk.W, padx=20, pady=(10, 0))
 
         button_frame = ttk.Frame(self, style="Dialog.TFrame")
         button_frame.pack(pady=16)
@@ -374,7 +388,20 @@ class SettingsDialog(tk.Toplevel):
             messagebox.showerror("Base directory required", "Please choose a base directory.", parent=self)
             return
 
-        self.result = (base, self.auto_switch_var.get(), self.theme_mode.get())
+        interval = 5
+        try:
+            interval = max(1, int(self.refresh_interval_var.get().strip()))
+        except ValueError:
+            messagebox.showerror("Invalid interval", "Please enter a valid number of minutes.", parent=self)
+            return
+
+        self.result = (
+            base,
+            self.auto_switch_var.get(),
+            self.theme_mode.get(),
+            self.auto_refresh_var.get(),
+            interval,
+        )
         self.destroy()
 
     def _on_cancel(self) -> None:
@@ -399,16 +426,20 @@ class GitManagerGUI:
         saved_base = self.db.get_base_directory()
         initial_base = saved_base if saved_base else str(DEFAULT_BASE_DIR)
         self.auto_switch_to_local_commit = self.db.get_auto_switch_local_commit()
+        self.auto_refresh_enabled = self.db.get_auto_refresh_enabled()
+        self.refresh_interval = self.db.get_refresh_interval()
         self.theme_mode = self.db.get_theme_mode()
 
         self.base_var = tk.StringVar(value=initial_base)
         self.states: List[RepoState] = []
+        self.auto_refresh_job: Optional[str] = None
 
         self._build_layout()
         self.apply_theme(self.theme_mode)
         self.refresh_repos()
         if self.auto_switch_to_local_commit:
             self.switch_all_to_local_commit()
+        self._update_auto_refresh()
         
         # Register cleanup on window close
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -585,7 +616,7 @@ class GitManagerGUI:
         self.output.pack(fill=tk.BOTH, expand=True)
 
         # Status bar with better styling
-        status_frame = ttk.Frame(self.root, relief=tk.SUNKEN, padding=(8, 4))
+        status_frame = ttk.Frame(self.root, relief=tk.SUNKEN, padding=(12, 8))
         status_frame.pack(fill=tk.X, side=tk.BOTTOM)
         
         self.status_var = tk.StringVar(value="✓ Ready")
@@ -593,9 +624,9 @@ class GitManagerGUI:
             status_frame,
             textvariable=self.status_var,
             anchor=tk.W,
-            font=("Helvetica", 9),
+            font=("Helvetica", 10, "bold"),
         )
-        self.status_label.pack(fill=tk.X)
+        self.status_label.pack(fill=tk.X, ipady=2)
 
     def refresh_repos(self) -> None:
         base_dir = Path(self.base_var.get()).expanduser()
@@ -665,6 +696,7 @@ class GitManagerGUI:
 
     def on_closing(self) -> None:
         """Handle window close event."""
+        self._cancel_auto_refresh()
         self.switch_all_to_local_commit()
         self.root.destroy()
 
@@ -674,6 +706,32 @@ class GitManagerGUI:
         self.output.configure(state="disabled")
         self.output.see(tk.END)
         self.root.update()  # Force GUI refresh to show updates in real-time
+
+    def _schedule_auto_refresh(self) -> None:
+        self._cancel_auto_refresh()
+        if not self.auto_refresh_enabled:
+            return
+
+        interval_ms = max(1, self.refresh_interval) * 60_000
+        self.auto_refresh_job = self.root.after(interval_ms, self._auto_refresh_callback)
+
+    def _cancel_auto_refresh(self) -> None:
+        if getattr(self, "auto_refresh_job", None) is not None:
+            try:
+                self.root.after_cancel(self.auto_refresh_job)
+            except Exception:
+                pass
+            self.auto_refresh_job = None
+
+    def _update_auto_refresh(self) -> None:
+        if self.auto_refresh_enabled:
+            self._schedule_auto_refresh()
+        else:
+            self._cancel_auto_refresh()
+
+    def _auto_refresh_callback(self) -> None:
+        self.refresh_repos()
+        self._schedule_auto_refresh()
 
     # --- helpers ---------------------------------------------------------
     def _abort_in_progress_ops(self, repo: Path) -> None:
@@ -752,21 +810,28 @@ class GitManagerGUI:
             self.base_var.get(),
             self.auto_switch_to_local_commit,
             self.theme_mode,
+            self.auto_refresh_enabled,
+            self.refresh_interval,
         )
         self.root.wait_window(dialog)
         if dialog.result is None:
             return
 
-        new_base, auto_switch, theme_mode = dialog.result
+        new_base, auto_switch, theme_mode, auto_refresh_enabled, refresh_interval = dialog.result
         self.base_var.set(new_base)
         self.auto_switch_to_local_commit = auto_switch
+        self.auto_refresh_enabled = auto_refresh_enabled
+        self.refresh_interval = refresh_interval
         self.theme_mode = theme_mode
         self.db.set_base_directory(new_base)
         self.db.set_auto_switch_local_commit(auto_switch)
         self.db.set_theme_mode(theme_mode)
+        self.db.set_auto_refresh_enabled(auto_refresh_enabled)
+        self.db.set_refresh_interval(refresh_interval)
 
         self.append_output(f"💾 Settings saved. Base directory: {new_base}\n")
         self.apply_theme(self.theme_mode)
+        self._update_auto_refresh()
         self.refresh_repos()
         if auto_switch:
             self.switch_all_to_local_commit()

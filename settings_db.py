@@ -63,6 +63,26 @@ class SettingsDB:
         """Save auto-switch-on-startup preference."""
         self.set("auto_switch_local_commit", "1" if enabled else "0")
 
+    def get_auto_refresh_enabled(self) -> bool:
+        """Return whether auto-refresh is enabled."""
+        return self.get("auto_refresh_enabled", default="0") == "1"
+
+    def set_auto_refresh_enabled(self, enabled: bool) -> None:
+        """Save the auto-refresh enabled state."""
+        self.set("auto_refresh_enabled", "1" if enabled else "0")
+
+    def get_refresh_interval(self) -> int:
+        """Return the auto-refresh interval in minutes."""
+        value = self.get("refresh_interval", default="5")
+        try:
+            return max(1, int(value))
+        except ValueError:
+            return 5
+
+    def set_refresh_interval(self, minutes: int) -> None:
+        """Save the auto-refresh interval in minutes."""
+        self.set("refresh_interval", str(minutes))
+
     def get_theme_mode(self) -> str:
         """Return the saved theme mode."""
         return self.get("theme_mode", default="light")
