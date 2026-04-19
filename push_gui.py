@@ -56,16 +56,19 @@ class NumericKeypadDialog(tk.Toplevel):
         self.value_var = tk.StringVar(value="0")
         entry_bg = "#1e2228" if theme_mode == "dark" else "#f1f5f9"
         entry_fg = "#e8e8e8" if theme_mode == "dark" else "#111827"
-        display = ttk.Entry(
+        display = tk.Entry(
             self,
             textvariable=self.value_var,
             font=("Helvetica", 14, "bold"),
             width=15,
             justify=tk.CENTER,
             state="readonly",
-            style="Dialog.TEntry",
-            foreground=entry_fg,
+            bg=entry_bg,
+            fg=entry_fg,
             readonlybackground=entry_bg,
+            disabledforeground=entry_fg,
+            relief=tk.SOLID,
+            bd=1,
         )
         display.pack(pady=10, padx=20)
         
