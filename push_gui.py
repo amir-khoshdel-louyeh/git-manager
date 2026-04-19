@@ -637,6 +637,7 @@ class GitManagerGUI:
             foreground=heading_fg,
             relief="raised",
             font=("Helvetica", self.table_font_size, "bold"),
+            padding=(8, 10),
         )
         style.map("Treeview.Heading",
             background=[('active', heading_bg), ('pressed', heading_bg)],
