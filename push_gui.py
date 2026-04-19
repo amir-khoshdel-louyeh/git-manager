@@ -320,11 +320,20 @@ class ResetDialog(tk.Toplevel):
 class SettingsDialog(tk.Toplevel):
     """Dialog for changing application settings."""
 
-    def __init__(self, parent: tk.Tk, base_directory: str, auto_switch: bool, theme_mode: str, auto_refresh: bool, refresh_interval: int) -> None:
+    def __init__(
+        self,
+        parent: tk.Tk,
+        base_directory: str,
+        auto_switch: bool,
+        theme_mode: str,
+        auto_refresh: bool,
+        refresh_interval: int,
+        output_font_size: int,
+    ) -> None:
         super().__init__(parent)
         self.title("Settings")
         self.resizable(False, False)
-        self.result: Optional[tuple[str, bool, str, bool, int]] = None
+        self.result: Optional[tuple[str, bool, str, bool, int, int]] = None
         self.theme_mode = theme_mode
 
         dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
@@ -366,6 +375,24 @@ class SettingsDialog(tk.Toplevel):
         ttk.Radiobutton(theme_frame, text="Light", variable=self.theme_mode, value="light", style="Dialog.TRadiobutton").pack(side=tk.LEFT, padx=4)
         ttk.Radiobutton(theme_frame, text="Dark", variable=self.theme_mode, value="dark", style="Dialog.TRadiobutton").pack(side=tk.LEFT, padx=4)
 
+        zoom_frame = ttk.LabelFrame(self, text="Zoom", style="Dialog.TLabelframe")
+        zoom_frame.pack(fill=tk.X, padx=20, pady=8)
+        self.output_font_size_var = tk.StringVar(value=str(output_font_size))
+
+        zoom_row = ttk.Frame(zoom_frame, style="Dialog.TFrame")
+        zoom_row.pack(fill=tk.X, padx=12, pady=(8, 12))
+        ttk.Label(zoom_row, text="Terminal font size:", font=("Helvetica", 10), style="Dialog.TLabel").pack(side=tk.LEFT)
+        ttk.Spinbox(
+            zoom_row,
+            from_=8,
+            to=24,
+            increment=1,
+            textvariable=self.output_font_size_var,
+            width=6,
+            justify=tk.CENTER,
+            style="Dialog.TSpinbox",
+        ).pack(side=tk.RIGHT)
+
         button_frame = ttk.Frame(self, style="Dialog.TFrame")
         button_frame.pack(pady=16)
         ttk.Button(button_frame, text="Save", command=self._on_ok, style="Dialog.TButton").pack(side=tk.LEFT, padx=5)
@@ -397,12 +424,20 @@ class SettingsDialog(tk.Toplevel):
             messagebox.showerror("Invalid interval", "Please enter a valid number of minutes.", parent=self)
             return
 
+        output_font_size = 10
+        try:
+            output_font_size = max(8, min(24, int(self.output_font_size_var.get().strip())))
+        except ValueError:
+            messagebox.showerror("Invalid font size", "Please enter a valid terminal font size.", parent=self)
+            return
+
         self.result = (
             base,
             self.auto_switch_var.get(),
             self.theme_mode.get(),
             self.auto_refresh_var.get(),
             interval,
+            output_font_size,
         )
         self.destroy()
 
@@ -433,6 +468,7 @@ class GitManagerGUI:
         self.theme_mode = self.db.get_theme_mode()
 
         self.base_var = tk.StringVar(value=initial_base)
+        self.output_font_size = self.db.get_output_font_size()
         self.states: List[RepoState] = []
         self.auto_refresh_job: Optional[str] = None
 
@@ -532,7 +568,7 @@ class GitManagerGUI:
         style.configure("Vertical.TScrollbar", background=frame_bg)
 
         if hasattr(self, "output"):
-            self.output.configure(bg=text_bg, fg=fg, insertbackground=fg)
+            self.output.configure(bg=text_bg, fg=fg, insertbackground=fg, font=("Courier", self.output_font_size))
 
         if hasattr(self, "status_label"):
             self.status_label.configure(background=frame_bg, foreground=status_fg)
@@ -814,22 +850,25 @@ class GitManagerGUI:
             self.theme_mode,
             self.auto_refresh_enabled,
             self.refresh_interval,
+            self.output_font_size,
         )
         self.root.wait_window(dialog)
         if dialog.result is None:
             return
 
-        new_base, auto_switch, theme_mode, auto_refresh_enabled, refresh_interval = dialog.result
+        new_base, auto_switch, theme_mode, auto_refresh_enabled, refresh_interval, output_font_size = dialog.result
         self.base_var.set(new_base)
         self.auto_switch_to_local_commit = auto_switch
         self.auto_refresh_enabled = auto_refresh_enabled
         self.refresh_interval = refresh_interval
         self.theme_mode = theme_mode
+        self.output_font_size = output_font_size
         self.db.set_base_directory(new_base)
         self.db.set_auto_switch_local_commit(auto_switch)
         self.db.set_theme_mode(theme_mode)
         self.db.set_auto_refresh_enabled(auto_refresh_enabled)
         self.db.set_refresh_interval(refresh_interval)
+        self.db.set_output_font_size(output_font_size)
 
         self.append_output(f"💾 Settings saved. Base directory: {new_base}\n")
         self.apply_theme(self.theme_mode)

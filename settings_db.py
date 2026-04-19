@@ -83,6 +83,14 @@ class SettingsDB:
         """Save the auto-refresh interval in minutes."""
         self.set("refresh_interval", str(minutes))
 
+    def get_int(self, key: str, default: int) -> int:
+        """Return an integer setting value, or the provided default."""
+        value = self.settings.get(key, default)
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return default
+
     def get_theme_mode(self) -> str:
         """Return the saved theme mode."""
         return self.get("theme_mode", default="light")
@@ -90,3 +98,11 @@ class SettingsDB:
     def set_theme_mode(self, mode: str) -> None:
         """Save the UI theme mode."""
         self.set("theme_mode", mode)
+
+    def get_output_font_size(self) -> int:
+        """Return the saved terminal output font size."""
+        return self.get_int("output_font_size", 10)
+
+    def set_output_font_size(self, size: int) -> None:
+        """Save the terminal output font size."""
+        self.set("output_font_size", str(size))
