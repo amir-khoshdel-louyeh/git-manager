@@ -106,3 +106,11 @@ class SettingsDB:
     def set_output_font_size(self, size: int) -> None:
         """Save the terminal output font size."""
         self.set("output_font_size", str(size))
+
+    def get_table_font_size(self) -> int:
+        """Return the saved repo table font size."""
+        return self.get_int("table_font_size", 10)
+
+    def set_table_font_size(self, size: int) -> None:
+        """Save the repo table font size."""
+        self.set("table_font_size", str(size))

@@ -333,7 +333,7 @@ class SettingsDialog(tk.Toplevel):
         super().__init__(parent)
         self.title("Settings")
         self.resizable(False, False)
-        self.result: Optional[tuple[str, bool, str, bool, int, int]] = None
+        self.result: Optional[tuple[str, bool, str, bool, int, int, int]] = None
         self.theme_mode = theme_mode
 
         dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
@@ -378,16 +378,31 @@ class SettingsDialog(tk.Toplevel):
         zoom_frame = ttk.LabelFrame(self, text="Zoom", style="Dialog.TLabelframe")
         zoom_frame.pack(fill=tk.X, padx=20, pady=8)
         self.output_font_size_var = tk.StringVar(value=str(output_font_size))
+        self.table_font_size_var = tk.StringVar(value=str(table_font_size))
 
-        zoom_row = ttk.Frame(zoom_frame, style="Dialog.TFrame")
-        zoom_row.pack(fill=tk.X, padx=12, pady=(8, 12))
-        ttk.Label(zoom_row, text="Terminal font size:", font=("Helvetica", 10), style="Dialog.TLabel").pack(side=tk.LEFT)
+        terminal_zoom_row = ttk.Frame(zoom_frame, style="Dialog.TFrame")
+        terminal_zoom_row.pack(fill=tk.X, padx=12, pady=(8, 4))
+        ttk.Label(terminal_zoom_row, text="Terminal font size:", font=("Helvetica", 10), style="Dialog.TLabel").pack(side=tk.LEFT)
         ttk.Spinbox(
-            zoom_row,
+            terminal_zoom_row,
             from_=8,
             to=24,
             increment=1,
             textvariable=self.output_font_size_var,
+            width=6,
+            justify=tk.CENTER,
+            style="Dialog.TSpinbox",
+        ).pack(side=tk.RIGHT)
+
+        table_zoom_row = ttk.Frame(zoom_frame, style="Dialog.TFrame")
+        table_zoom_row.pack(fill=tk.X, padx=12, pady=(4, 12))
+        ttk.Label(table_zoom_row, text="Repository table font size:", font=("Helvetica", 10), style="Dialog.TLabel").pack(side=tk.LEFT)
+        ttk.Spinbox(
+            table_zoom_row,
+            from_=8,
+            to=24,
+            increment=1,
+            textvariable=self.table_font_size_var,
             width=6,
             justify=tk.CENTER,
             style="Dialog.TSpinbox",
@@ -431,6 +446,13 @@ class SettingsDialog(tk.Toplevel):
             messagebox.showerror("Invalid font size", "Please enter a valid terminal font size.", parent=self)
             return
 
+        table_font_size = 10
+        try:
+            table_font_size = max(8, min(24, int(self.table_font_size_var.get().strip())))
+        except ValueError:
+            messagebox.showerror("Invalid font size", "Please enter a valid repository table font size.", parent=self)
+            return
+
         self.result = (
             base,
             self.auto_switch_var.get(),
@@ -438,6 +460,7 @@ class SettingsDialog(tk.Toplevel):
             self.auto_refresh_var.get(),
             interval,
             output_font_size,
+            table_font_size,
         )
         self.destroy()
 
@@ -469,6 +492,7 @@ class GitManagerGUI:
 
         self.base_var = tk.StringVar(value=initial_base)
         self.output_font_size = self.db.get_output_font_size()
+        self.table_font_size = self.db.get_table_font_size()
         self.states: List[RepoState] = []
         self.auto_refresh_job: Optional[str] = None
 
@@ -557,9 +581,22 @@ class GitManagerGUI:
             background=[('active', button_active), ('pressed', button_active)],
             foreground=[('disabled', '#888888')]
         )
-        style.configure("Treeview", background=text_bg, fieldbackground=text_bg, foreground=fg, rowheight=28)
+        style.configure(
+            "Treeview",
+            background=text_bg,
+            fieldbackground=text_bg,
+            foreground=fg,
+            font=("Helvetica", self.table_font_size),
+            rowheight=max(24, int(self.table_font_size * 2.8)),
+        )
         style.map("Treeview", background=[('selected', selected_bg)], foreground=[('selected', selected_fg)])
-        style.configure("Treeview.Heading", background=heading_bg, foreground=heading_fg, relief="raised")
+        style.configure(
+            "Treeview.Heading",
+            background=heading_bg,
+            foreground=heading_fg,
+            relief="raised",
+            font=("Helvetica", self.table_font_size, "bold"),
+        )
         style.map("Treeview.Heading",
             background=[('active', heading_bg), ('pressed', heading_bg)],
             foreground=[('active', heading_fg), ('pressed', heading_fg)]
@@ -851,24 +888,27 @@ class GitManagerGUI:
             self.auto_refresh_enabled,
             self.refresh_interval,
             self.output_font_size,
+            self.table_font_size,
         )
         self.root.wait_window(dialog)
         if dialog.result is None:
             return
 
-        new_base, auto_switch, theme_mode, auto_refresh_enabled, refresh_interval, output_font_size = dialog.result
+        new_base, auto_switch, theme_mode, auto_refresh_enabled, refresh_interval, output_font_size, table_font_size = dialog.result
         self.base_var.set(new_base)
         self.auto_switch_to_local_commit = auto_switch
         self.auto_refresh_enabled = auto_refresh_enabled
         self.refresh_interval = refresh_interval
         self.theme_mode = theme_mode
         self.output_font_size = output_font_size
+        self.table_font_size = table_font_size
         self.db.set_base_directory(new_base)
         self.db.set_auto_switch_local_commit(auto_switch)
         self.db.set_theme_mode(theme_mode)
         self.db.set_auto_refresh_enabled(auto_refresh_enabled)
         self.db.set_refresh_interval(refresh_interval)
         self.db.set_output_font_size(output_font_size)
+        self.db.set_table_font_size(table_font_size)
 
         self.append_output(f"💾 Settings saved. Base directory: {new_base}\n")
         self.apply_theme(self.theme_mode)
