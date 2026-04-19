@@ -251,9 +251,11 @@ class PreviewModeDialog(tk.Toplevel):
 
     def _on_pushed(self) -> None:
         self.result = "pushed"
+        self.destroy()
 
     def _on_unpushed(self) -> None:
         self.result = "unpushed"
+        self.destroy()
 
     def _on_cancel(self) -> None:
         self.result = None
