@@ -920,6 +920,7 @@ class GitManagerGUI:
         self.db.set_base_directory(new_dir)
         self.append_output(f"💾 Saved base directory: {new_dir}\n")
         self.refresh_repos()
+        self.append_output("✅ Base directory updated. You may continue or close the app.\n")
 
     def action_settings(self) -> None:
         dialog = SettingsDialog(
@@ -961,6 +962,7 @@ class GitManagerGUI:
         self.refresh_repos()
         if auto_switch:
             self.switch_all_to_local_commit()
+        self.append_output("✅ Settings saved. You may continue or close the app.\n")
 
     def action_switch(self) -> None:
         state = self.selected_state()
@@ -976,6 +978,7 @@ class GitManagerGUI:
                 new_branch = "local_commit"
             self.append_output(f"Switched to {new_branch} in {state.name}")
             self.refresh_repos()
+            self.append_output("✅ Operation complete. The branch switch is done.\n")
         except GitManagerError as exc:
             self.append_output(f"\n❌ Error: {str(exc)}\n")
             messagebox.showerror("Operation Failed", "An error occurred. Check the output panel for details.")
@@ -1067,8 +1070,10 @@ class GitManagerGUI:
             )
             if not log.strip():
                 self.append_output(f"No {mode} commits found for {state.name}.\n")
+                self.append_output("✅ Preview complete. No changes were made.\n")
                 return
             self.append_output(f"{title} for {state.name}:\n{log}\n")
+            self.append_output("✅ Preview complete. You may review the output and close this view.\n")
         except GitManagerError as exc:
             self.append_output(f"\n❌ Error: {str(exc)}\n")
             messagebox.showerror("Operation Failed", "An error occurred. Check the output panel for details.")
@@ -1096,6 +1101,7 @@ class GitManagerGUI:
             GitOperations.run_git(["reset", f"--{reset_type}", target], cwd=state.path)
             self.append_output(f"✅ Reset {state.name} to {target} with --{reset_type}\n")
             self.refresh_repos()
+            self.append_output("✅ Reset complete. The repository is now on the target branch.\n")
         except GitManagerError as exc:
             self.append_output(f"\n❌ Error: {str(exc)}\n")
             messagebox.showerror("Reset Failed", "An error occurred during reset. Check the output panel for details.")
@@ -1138,6 +1144,7 @@ class GitManagerGUI:
             GitOperations.run_git(["commit", "-m", message.strip()], cwd=repo)
             self.append_output(f"✅ Commit created in {state.name}: {message.strip()}")
             self.refresh_repos()
+            self.append_output("✅ Commit complete. You may close the app or continue working.\n")
         except GitManagerError as exc:
             self.append_output(f"\n❌ Error: {str(exc)}\n")
             messagebox.showerror("Commit Failed", "An error occurred while committing. Check the output panel for details.")
@@ -1377,6 +1384,7 @@ class GitManagerGUI:
                 GitOperations.run_git(["branch", "-D", temp_branch], cwd=repo)
                 temp_branch = None
             self.refresh_repos()
+            self.append_output("✅ Move complete. local_commit and the base branch are now updated.\n")
         except GitManagerError as exc:
             self.append_output(f"\n❌ Error: {str(exc)}\n")
             if temp_branch or base_before or local_before:
