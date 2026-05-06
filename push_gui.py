@@ -528,16 +528,43 @@ class GitManagerGUI:
         self.button_font_size = self.db.get_button_font_size()
         self.states: List[RepoState] = []
         self.auto_refresh_job: Optional[str] = None
+        self.operation_in_progress = False
 
         self._build_layout()
         self.apply_theme(self.theme_mode)
         self.refresh_repos()
         if self.auto_switch_to_local_commit:
-            self.switch_all_to_local_commit()
+            self.switch_all_to_local_commit(skip_busy_check=True)
         self._update_auto_refresh()
         
         # Register cleanup on window close
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def _start_operation(self, description: str) -> bool:
+        if self.operation_in_progress:
+            messagebox.showerror(
+                "Operation in progress",
+                f"Another operation is already running. Please wait for it to finish before {description}.",
+                parent=self.root,
+            )
+            return False
+        self.operation_in_progress = True
+        self.status_var.set(f"⏳ {description.capitalize()}... Please wait.")
+        self.root.update_idletasks()
+        return True
+
+    def _end_operation(self) -> None:
+        self.operation_in_progress = False
+        self.status_var.set("✓ Ready")
+        self.root.update_idletasks()
+
+    def _confirm_exit_during_operation(self) -> bool:
+        return messagebox.askyesno(
+            "Operation in progress",
+            "An operation is currently running. Do you want to exit anyway?\n"
+            "This may interrupt the current task.",
+            parent=self.root,
+        )
 
     def apply_theme(self, mode: str) -> None:
         style = ttk.Style()
@@ -788,33 +815,42 @@ class GitManagerGUI:
         
         self.status_var.set(f"✓ Loaded {len(states)} repositories from {base_dir}")
 
-    def switch_all_to_local_commit(self) -> None:
+    def switch_all_to_local_commit(self, skip_busy_check: bool = False) -> None:
         """Switch all repositories to local_commit branch."""
         if not self.states:
             return
-        
-        self.append_output("🔄 Ensuring all repositories are on local_commit branch...\n")
-        for state in self.states:
-            try:
-                if state.current_branch != "local_commit":
-                    if state.local_exists:
-                        BranchManager.checkout(state.path, "local_commit")
-                        self.append_output(f"  ✓ {state.name}: switched to local_commit\n")
+        if not skip_busy_check and not self._start_operation("switch all repositories to local_commit"):
+            return
+
+        try:
+            self.append_output("🔄 Ensuring all repositories are on local_commit branch...\n")
+            for state in self.states:
+                try:
+                    if state.current_branch != "local_commit":
+                        if state.local_exists:
+                            BranchManager.checkout(state.path, "local_commit")
+                            self.append_output(f"  ✓ {state.name}: switched to local_commit\n")
+                        else:
+                            # Create local_commit from base branch
+                            BranchManager.switch_to_local_commit(state.path, state.base_branch)
+                            self.append_output(f"  ✓ {state.name}: created and switched to local_commit\n")
                     else:
-                        # Create local_commit from base branch
-                        BranchManager.switch_to_local_commit(state.path, state.base_branch)
-                        self.append_output(f"  ✓ {state.name}: created and switched to local_commit\n")
-                else:
-                    self.append_output(f"  ✓ {state.name}: already on local_commit\n")
-            except GitManagerError as exc:
-                self.append_output(f"  ⚠️  {state.name}: {str(exc)}\n")
-        self.append_output("✅ Branch check complete\n\n")
-        self.refresh_repos()
+                        self.append_output(f"  ✓ {state.name}: already on local_commit\n")
+                except GitManagerError as exc:
+                    self.append_output(f"  ⚠️  {state.name}: {str(exc)}\n")
+            self.append_output("✅ Branch check complete\n\n")
+            self.refresh_repos()
+        finally:
+            if not skip_busy_check:
+                self._end_operation()
 
     def on_closing(self) -> None:
         """Handle window close event."""
+        if self.operation_in_progress:
+            if not self._confirm_exit_during_operation():
+                return
         self._cancel_auto_refresh()
-        self.switch_all_to_local_commit()
+        self.switch_all_to_local_commit(skip_busy_check=True)
         self.root.destroy()
 
     def append_output(self, text: str) -> None:
@@ -909,20 +945,32 @@ class GitManagerGUI:
         return self.states[idx]
 
     def action_change_base_directory(self) -> None:
-        new_dir = filedialog.askdirectory(
-            parent=self.root,
-            title="Select Base Directory",
-            initialdir=self.base_var.get(),
-        )
-        if not new_dir:
+        if not self._start_operation("change the base directory"):
             return
-        self.base_var.set(new_dir)
-        self.db.set_base_directory(new_dir)
-        self.append_output(f"💾 Saved base directory: {new_dir}\n")
-        self.refresh_repos()
-        self.append_output("✅ Base directory updated. You may continue or close the app.\n")
+        try:
+            new_dir = filedialog.askdirectory(
+                parent=self.root,
+                title="Select Base Directory",
+                initialdir=self.base_var.get(),
+            )
+            if not new_dir:
+                return
+            self.base_var.set(new_dir)
+            self.db.set_base_directory(new_dir)
+            self.append_output(f"💾 Saved base directory: {new_dir}\n")
+            self.refresh_repos()
+            self.append_output("✅ Base directory updated. You may continue or close the app.\n")
+        finally:
+            self._end_operation()
 
     def action_settings(self) -> None:
+        if self.operation_in_progress:
+            messagebox.showerror(
+                "Operation in progress",
+                "Another operation is currently running. Please wait for it to finish before opening settings.",
+                parent=self.root,
+            )
+            return
         dialog = SettingsDialog(
             self.root,
             self.base_var.get(),
@@ -965,8 +1013,11 @@ class GitManagerGUI:
         self.append_output("✅ Settings saved. You may continue or close the app.\n")
 
     def action_switch(self) -> None:
+        if not self._start_operation("switch branches"):
+            return
         state = self.selected_state()
         if not state:
+            self._end_operation()
             return
         try:
             GitConfig.ensure_identity(state.path)
@@ -982,6 +1033,8 @@ class GitManagerGUI:
         except GitManagerError as exc:
             self.append_output(f"\n❌ Error: {str(exc)}\n")
             messagebox.showerror("Operation Failed", "An error occurred. Check the output panel for details.")
+        finally:
+            self._end_operation()
 
     def _resolve_upstream(self, repo: Path, branch: str, base_branch: str) -> Optional[str]:
         try:
@@ -1008,20 +1061,23 @@ class GitManagerGUI:
         return None
 
     def action_preview(self) -> None:
+        if not self._start_operation("preview commits"):
+            return
         state = self.selected_state()
         if not state:
+            self._end_operation()
             return
-
-        dialog = PreviewModeDialog(self.root, self.theme_mode)
-        self.root.wait_window(dialog)
-        if dialog.result is None:
-            return
-
-        mode = dialog.result
-        branch = state.current_branch
-        upstream = self._resolve_upstream(state.path, branch, state.base_branch)
 
         try:
+            dialog = PreviewModeDialog(self.root, self.theme_mode)
+            self.root.wait_window(dialog)
+            if dialog.result is None:
+                return
+
+            mode = dialog.result
+            branch = state.current_branch
+            upstream = self._resolve_upstream(state.path, branch, state.base_branch)
+
             if mode == "unpushed":
                 if branch == "local_commit":
                     if not state.base_branch:
@@ -1077,26 +1133,31 @@ class GitManagerGUI:
         except GitManagerError as exc:
             self.append_output(f"\n❌ Error: {str(exc)}\n")
             messagebox.showerror("Operation Failed", "An error occurred. Check the output panel for details.")
+        finally:
+            self._end_operation()
 
     def action_reset(self) -> None:
+        if not self._start_operation("reset the repository"):
+            return
         state = self.selected_state()
         if not state:
-            return
-
-        dialog = ResetDialog(self.root, state.name, self.theme_mode)
-        self.root.wait_window(dialog)
-        if dialog.result is None:
-            return
-
-        target, reset_type = dialog.result
-        if reset_type == "hard" and not messagebox.askyesno(
-            "Confirm Hard Reset",
-            f"Hard reset will discard uncommitted changes and move the branch to {target}. Continue?",
-            parent=self.root,
-        ):
+            self._end_operation()
             return
 
         try:
+            dialog = ResetDialog(self.root, state.name, self.theme_mode)
+            self.root.wait_window(dialog)
+            if dialog.result is None:
+                return
+
+            target, reset_type = dialog.result
+            if reset_type == "hard" and not messagebox.askyesno(
+                "Confirm Hard Reset",
+                f"Hard reset will discard uncommitted changes and move the branch to {target}. Continue?",
+                parent=self.root,
+            ):
+                return
+
             self.append_output(f"🔁 Resetting {state.name} to {target} with --{reset_type}...\n")
             GitOperations.run_git(["reset", f"--{reset_type}", target], cwd=state.path)
             self.append_output(f"✅ Reset {state.name} to {target} with --{reset_type}\n")
@@ -1105,10 +1166,15 @@ class GitManagerGUI:
         except GitManagerError as exc:
             self.append_output(f"\n❌ Error: {str(exc)}\n")
             messagebox.showerror("Reset Failed", "An error occurred during reset. Check the output panel for details.")
+        finally:
+            self._end_operation()
 
     def action_make_commit(self) -> None:
+        if not self._start_operation("make a commit"):
+            return
         state = self.selected_state()
         if not state:
+            self._end_operation()
             return
 
         repo = state.path
@@ -1148,10 +1214,15 @@ class GitManagerGUI:
         except GitManagerError as exc:
             self.append_output(f"\n❌ Error: {str(exc)}\n")
             messagebox.showerror("Commit Failed", "An error occurred while committing. Check the output panel for details.")
+        finally:
+            self._end_operation()
 
     def action_move(self) -> None:
+        if not self._start_operation("move commits"):
+            return
         state = self.selected_state()
         if not state:
+            self._end_operation()
             return
         repo = state.path
         base_branch = state.base_branch
@@ -1417,6 +1488,8 @@ class GitManagerGUI:
                     except GitManagerError:
                         self.append_output("⚠️ Rollback stash pop failed. Resolve manually with 'git stash pop'\n")
             messagebox.showerror("Operation Failed", "An error occurred. Check the output panel for details.")
+        finally:
+            self._end_operation()
 
 def main() -> None:
     root = tk.Tk()
