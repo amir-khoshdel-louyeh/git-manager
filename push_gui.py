@@ -1235,7 +1235,41 @@ class GitManagerGUI:
             GitConfig.ensure_identity(repo)
             if not GitOperations.git_ok(["rev-parse", "--verify", "--quiet", "local_commit"], cwd=repo):
                 raise GitManagerError("local_commit does not exist")
-            base_before = GitOperations.run_git(["rev-parse", "--verify", base_branch], cwd=repo).strip()
+
+            if GitOperations.git_ok(["remote", "get-url", "origin"], cwd=repo):
+                try:
+                    self.append_output("🔄 Fetching origin before move...\n")
+                    GitOperations.run_git(["fetch", "--prune", "origin"], cwd=repo)
+                except GitManagerError as exc:
+                    raise GitManagerError(
+                        f"Failed to fetch origin before move. Remote is unavailable or access is denied: {str(exc)}"
+                    )
+
+            remote_base = f"origin/{base_branch}"
+            if base_branch and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/remotes/{remote_base}"], cwd=repo):
+                ahead = int(
+                    GitOperations.run_git(["rev-list", "--count", f"{base_branch}..{remote_base}"], cwd=repo).strip() or "0"
+                )
+                behind = int(
+                    GitOperations.run_git(["rev-list", "--count", f"{remote_base}..{base_branch}"], cwd=repo).strip() or "0"
+                )
+                if ahead > 0 and behind > 0:
+                    raise GitManagerError(
+                        f"Local {base_branch} diverges from {remote_base}. Sync or rebase before moving commits."
+                    )
+                if ahead > 0:
+                    self.append_output(f"ℹ️ Local {base_branch} is behind {remote_base}; applying commits onto remote history.\n")
+                    start_ref = remote_base
+                elif behind > 0:
+                    raise GitManagerError(
+                        f"Local {base_branch} has unpushed commits. Push or rebase it before moving commits."
+                    )
+                else:
+                    start_ref = base_branch
+            else:
+                start_ref = base_branch
+
+            base_before = GitOperations.run_git(["rev-parse", "--verify", start_ref], cwd=repo).strip()
             local_before = GitOperations.run_git(["rev-parse", "--verify", "local_commit"], cwd=repo).strip()
             pending = int(GitOperations.run_git(["rev-list", "--count", f"{base_branch}..local_commit"], cwd=repo).strip() or "0")
             if pending == 0:
@@ -1373,15 +1407,12 @@ class GitManagerGUI:
             # ===== Pre-push validation =====
             self.append_output("🔍 Validating commits before push...\n")
             # 1) Ensure remote default branch matches target base branch
-            default_head = GitOperations.run_git(["remote", "show", "origin"], cwd=repo)
-            for line in default_head.splitlines():
-                if "HEAD branch:" in line:
-                    remote_head = line.split(":", 1)[1].strip()
-                    if remote_head and remote_head != base_branch:
-                        raise GitManagerError(
-                            f"Remote default branch is '{remote_head}', but target is '{base_branch}'."
-                        )
-                    break
+            if GitOperations.git_ok(["rev-parse", "--verify", "--quiet", "origin/HEAD"], cwd=repo):
+                remote_head = GitOperations.run_git(["rev-parse", "--abbrev-ref", "origin/HEAD"], cwd=repo).strip().removeprefix("origin/")
+                if remote_head and remote_head != base_branch:
+                    raise GitManagerError(
+                        f"Remote default branch is '{remote_head}', but target is '{base_branch}'."
+                    )
 
             # 2) Ensure author date day equals today's day for all moved commits
             dates = GitOperations.run_git(["log", "-n", str(processed_count), temp_branch, "--date=short", "--pretty=format:%ad"], cwd=repo).splitlines()
