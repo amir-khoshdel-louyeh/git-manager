@@ -504,7 +504,7 @@ class SettingsDialog(tk.Toplevel):
 # ============================================================================
 # GUI APPLICATION
 # ============================================================================
-DEFAULT_BASE_DIR = Path("/home/amir/GitHub")
+DEFAULT_BASE_DIR = Path.home() / "GitHub"
 
 
 class GitManagerGUI:
@@ -1498,7 +1498,14 @@ def main() -> None:
     screen_width = root.winfo_screenwidth()
     screen_height = root.winfo_screenheight()
     root.geometry(f"{screen_width}x{screen_height}+0+0")
-    root.attributes('-zoomed', True)  # Maximize window with controls
+    try:
+        root.attributes('-zoomed', True)  # Maximize window with controls
+    except tk.TclError:
+        try:
+            root.state('zoomed')
+        except tk.TclError:
+            # Some Tk builds do not support zoomed state or -zoomed attribute.
+            pass
 
     def _toggle_fullscreen(event: tk.Event | None = None) -> None:
         is_fullscreen = bool(root.attributes('-fullscreen'))
