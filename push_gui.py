@@ -2,6 +2,7 @@
 """Standalone GUI for managing git repositories with proper OOP structure."""
 from __future__ import annotations
 
+import ctypes
 import platform
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext, simpledialog, filedialog
@@ -1532,7 +1533,21 @@ class GitManagerGUI:
         finally:
             self._end_operation()
 
+def _enable_windows_dpi_awareness() -> None:
+    if platform.system() != "Windows":
+        return
+
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except OSError:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except OSError:
+            pass
+
+
 def main() -> None:
+    _enable_windows_dpi_awareness()
     root = tk.Tk()
     
     # Get screen dimensions and maximize
