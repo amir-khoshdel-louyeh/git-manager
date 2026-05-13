@@ -2,6 +2,7 @@
 """Standalone GUI for managing git repositories with proper OOP structure."""
 from __future__ import annotations
 
+import platform
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext, simpledialog, filedialog
 from pathlib import Path
@@ -603,11 +604,19 @@ class GitManagerGUI:
 
         self.theme_mode = mode
         self.root.configure(bg=bg)
+
+        if platform.system() == "Windows":
+            try:
+                style.theme_use("clam")
+            except tk.TclError:
+                pass
+
         style.configure("TFrame", background=frame_bg)
         style.configure("TLabel", background=frame_bg, foreground=fg)
         style.configure("TCheckbutton", background=frame_bg, foreground=fg, font=("Helvetica", self.button_font_size))
         style.configure("TRadiobutton", background=frame_bg, foreground=fg, font=("Helvetica", self.button_font_size))
         style.configure("TEntry", fieldbackground=entry_bg, foreground=entry_fg, background=entry_bg)
+        style.configure("TSpinbox", fieldbackground=entry_bg, foreground=entry_fg, background=entry_bg)
         style.configure(
             "TButton",
             font=("Helvetica", self.button_font_size),
@@ -645,6 +654,7 @@ class GitManagerGUI:
         style.configure("Dialog.TLabelframe", background=frame_bg, foreground=fg)
         style.configure("Dialog.TLabelframe.Label", background=frame_bg, foreground=fg)
         style.configure("Dialog.TRadiobutton", background=frame_bg, foreground=fg)
+        style.configure("Dialog.TSpinbox", fieldbackground=entry_bg, foreground=entry_fg, background=entry_bg)
         style.map("Action.TButton",
             background=[('active', button_active), ('pressed', button_active)],
             foreground=[('disabled', '#888888')]
