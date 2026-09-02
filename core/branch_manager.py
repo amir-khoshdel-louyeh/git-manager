@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from git_operations import GitOperations, GitManagerError
+from core.git_operations import GitManagerError, GitOperations
 
 
 class BranchManager:
