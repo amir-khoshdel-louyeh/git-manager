@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from git_operations import GitOperations
+from core.git_operations import GitOperations
 
 
 class WorkingTreeManager:
