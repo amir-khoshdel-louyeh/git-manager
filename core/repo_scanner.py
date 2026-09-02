@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List
 
-from git_operations import GitOperations, GitManagerError
-from repo_state import RepoState
+from core.git_operations import GitManagerError, GitOperations
+from core.repo_state import RepoState
 
 
 def _detect_base_branch(repo: Path, current_branch: str) -> str:
@@ -89,7 +89,7 @@ def _pending_count(repo: Path, base_branch: str, current_branch: str) -> int:
             return 0
         out = GitOperations.run_git(["rev-list", "--count", f"{base_branch}..local_commit"], cwd=repo)
         return int(out.strip() or "0")
-    
+
     # If we're on the base branch (MAIN), show unpushed commits (ahead of origin)
     if current_branch == base_branch:
         if not GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{base_branch}"], cwd=repo):
@@ -101,7 +101,7 @@ def _pending_count(repo: Path, base_branch: str, current_branch: str) -> int:
         # If no remote, show total commits on the branch
         out = GitOperations.run_git(["rev-list", "--count", base_branch], cwd=repo)
         return int(out.strip() or "0")
-    
+
     # For any other branch, show commits ahead of base
     if not GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{base_branch}"], cwd=repo):
         return 0
