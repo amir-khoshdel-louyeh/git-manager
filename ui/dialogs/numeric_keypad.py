@@ -1,4 +1,4 @@
-"""Numeric keypad dialog for commit count selection."""
+"""Numeric keypad dialog for commit count selection with date/time options."""
 
 from __future__ import annotations
 
@@ -6,11 +6,32 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Optional
 
+from utils.time_utils import build_custom_iso, is_after_last_commit, now_date_str, now_time_str
+
 
 class NumericKeypadDialog(tk.Toplevel):
-    """Custom dialog with numeric keypad for entering number of commits."""
+    """Custom dialog with numeric keypad for entering number of commits.
 
-    def __init__(self, parent: tk.Tk, title: str, prompt: str, minvalue: int = 1, maxvalue: int = 100, theme_mode: str = "light") -> None:
+    When ``show_date_options`` is True (used for Move Commits), the dialog also
+    shows:
+    - Last commit info for better experience
+    - Two radio options: "Current date and time" (default) vs "Custom date and time"
+    - Date (YYYY-MM-DD) and Time (HH:MM:SS) entry fields when custom is chosen
+    - Validation that custom datetime is after last commit on base
+    """
+
+    def __init__(
+        self,
+        parent: tk.Tk,
+        title: str,
+        prompt: str,
+        minvalue: int = 1,
+        maxvalue: int = 100,
+        theme_mode: str = "light",
+        show_date_options: bool = False,
+        last_commit_info: Optional[str] = None,
+        last_commit_iso: Optional[str] = None,
+    ) -> None:
         super().__init__(parent)
         self.title(title)
         self.resizable(False, False)
@@ -18,6 +39,16 @@ class NumericKeypadDialog(tk.Toplevel):
         self.minvalue = minvalue
         self.maxvalue = maxvalue
         self.theme_mode = theme_mode
+        self.show_date_options = show_date_options
+        self.last_commit_info = last_commit_info
+        self.last_commit_iso = last_commit_iso
+
+        # Date/time selection state (only relevant when show_date_options)
+        self.date_mode: str = "current"
+        self.custom_iso: Optional[str] = None
+        self.date_mode_var: Optional[tk.StringVar] = None
+        self.custom_date_var: Optional[tk.StringVar] = None
+        self.custom_time_var: Optional[tk.StringVar] = None
 
         dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
         self.configure(bg=dialog_bg)
@@ -67,6 +98,85 @@ class NumericKeypadDialog(tk.Toplevel):
                 btn = ttk.Button(row_frame, text=btn_text, width=5, command=lambda t=btn_text: self._on_key(t))
                 btn.pack(side=tk.LEFT, padx=2, pady=2)
 
+        # --- Date/time options (only for move flow) ---
+        if self.show_date_options:
+            separator = ttk.Separator(self, orient=tk.HORIZONTAL)
+            separator.pack(fill=tk.X, padx=20, pady=(8, 0))
+
+            # Last commit info for better experience
+            if self.last_commit_info:
+                info_frame = ttk.LabelFrame(self, text="Last commit on base", padding=8, style="Dialog.TLabelframe")
+                info_frame.pack(fill=tk.X, padx=20, pady=(8, 0))
+                # Truncate for display but keep full in tooltip-ish
+                info_label = ttk.Label(
+                    info_frame,
+                    text=self.last_commit_info,
+                    font=("Courier", 8),
+                    wraplength=420,
+                    justify=tk.LEFT,
+                    style="Dialog.TLabel",
+                )
+                info_label.pack(anchor=tk.W, fill=tk.X)
+                ttk.Label(
+                    info_frame,
+                    text="Custom date/time must be after this commit.",
+                    font=("Helvetica", 8, "italic"),
+                    style="Dialog.TLabel",
+                ).pack(anchor=tk.W, pady=(4, 0))
+            else:
+                ttk.Label(
+                    self,
+                    text="No prior commits on base (first commit). Any date/time is allowed.",
+                    font=("Helvetica", 8, "italic"),
+                    style="Dialog.TLabel",
+                    wraplength=420,
+                ).pack(pady=(8, 0), padx=20)
+
+            date_frame = ttk.LabelFrame(self, text="Commit date/time", padding=10, style="Dialog.TLabelframe")
+            date_frame.pack(fill=tk.X, padx=20, pady=10)
+
+            self.date_mode_var = tk.StringVar(value="current")
+            ttk.Radiobutton(
+                date_frame,
+                text="Current date and time (default)",
+                variable=self.date_mode_var,
+                value="current",
+                style="Dialog.TRadiobutton",
+                command=self._on_date_mode_change,
+            ).pack(anchor=tk.W, pady=2)
+            ttk.Radiobutton(
+                date_frame,
+                text="Custom date and time",
+                variable=self.date_mode_var,
+                value="custom",
+                style="Dialog.TRadiobutton",
+                command=self._on_date_mode_change,
+            ).pack(anchor=tk.W, pady=2)
+
+            custom_frame = ttk.Frame(date_frame, style="Dialog.TFrame")
+            custom_frame.pack(fill=tk.X, pady=(8, 0))
+            self._custom_frame = custom_frame
+
+            self.custom_date_var = tk.StringVar(value=now_date_str())
+            self.custom_time_var = tk.StringVar(value=now_time_str())
+
+            # Date row
+            date_row = ttk.Frame(custom_frame, style="Dialog.TFrame")
+            date_row.pack(fill=tk.X, pady=2)
+            ttk.Label(date_row, text="Date (YYYY-MM-DD):", font=("Helvetica", 9), style="Dialog.TLabel", width=18).pack(side=tk.LEFT)
+            self.custom_date_entry = ttk.Entry(date_row, textvariable=self.custom_date_var, width=14, style="Dialog.TEntry")
+            self.custom_date_entry.pack(side=tk.LEFT, padx=(8, 0))
+
+            # Time row
+            time_row = ttk.Frame(custom_frame, style="Dialog.TFrame")
+            time_row.pack(fill=tk.X, pady=2)
+            ttk.Label(time_row, text="Time (HH:MM:SS):", font=("Helvetica", 9), style="Dialog.TLabel", width=18).pack(side=tk.LEFT)
+            self.custom_time_entry = ttk.Entry(time_row, textvariable=self.custom_time_var, width=14, style="Dialog.TEntry")
+            self.custom_time_entry.pack(side=tk.LEFT, padx=(8, 0))
+
+            # Initially disabled because current is default
+            self._set_custom_entries_state(tk.DISABLED)
+
         # OK and Cancel buttons
         button_frame = ttk.Frame(self, style="Dialog.TFrame")
         button_frame.pack(pady=10)
@@ -95,6 +205,25 @@ class NumericKeypadDialog(tk.Toplevel):
         y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.winfo_height() // 2)
         self.geometry(f"+{x}+{y}")
 
+    def _set_custom_entries_state(self, state: str) -> None:
+        if hasattr(self, "custom_date_entry"):
+            self.custom_date_entry.configure(state=state)
+            self.custom_time_entry.configure(state=state)
+
+    def _on_date_mode_change(self) -> None:
+        if self.date_mode_var is None:
+            return
+        mode = self.date_mode_var.get()
+        if mode == "custom":
+            self._set_custom_entries_state(tk.NORMAL)
+            # Focus date entry for convenience
+            try:
+                self.custom_date_entry.focus_set()
+            except tk.TclError:
+                pass
+        else:
+            self._set_custom_entries_state(tk.DISABLED)
+
     def _on_key(self, key: str) -> None:
         """Handle keypad button press."""
         current = self.value_var.get()
@@ -116,17 +245,51 @@ class NumericKeypadDialog(tk.Toplevel):
 
     def _on_ok(self) -> None:
         """Handle OK button."""
+        # Validate number first
         try:
             value = int(self.value_var.get())
-            if self.minvalue <= value <= self.maxvalue:
-                self.result = value
-                self.destroy()
-            else:
-                messagebox.showerror("Invalid Input", f"Please enter a number between {self.minvalue} and {self.maxvalue}")
+            if not (self.minvalue <= value <= self.maxvalue):
+                messagebox.showerror("Invalid Input", f"Please enter a number between {self.minvalue} and {self.maxvalue}", parent=self)
+                return
         except ValueError:
-            messagebox.showerror("Invalid Input", "Please enter a valid number")
+            messagebox.showerror("Invalid Input", "Please enter a valid number", parent=self)
+            return
+
+        # Validate date/time if shown
+        if self.show_date_options and self.date_mode_var is not None:
+            mode = self.date_mode_var.get()
+            self.date_mode = mode
+            if mode == "custom":
+                date_str = self.custom_date_var.get().strip() if self.custom_date_var else ""
+                time_str = self.custom_time_var.get().strip() if self.custom_time_var else ""
+                try:
+                    custom_iso = build_custom_iso(date_str, time_str)
+                except ValueError as exc:
+                    messagebox.showerror("Invalid date/time", str(exc), parent=self)
+                    return
+                # Must be after last commit
+                if not is_after_last_commit(custom_iso, self.last_commit_iso):
+                    messagebox.showerror(
+                        "Invalid date/time",
+                        f"Custom date/time must be after the last commit on base.\n\n"
+                        f"Last commit: {self.last_commit_iso or self.last_commit_info or 'N/A'}\n"
+                        f"Your choice: {custom_iso}\n\n"
+                        f"Please choose a later date/time.",
+                        parent=self,
+                    )
+                    return
+                self.custom_iso = custom_iso
+            else:
+                self.custom_iso = None
+        else:
+            self.date_mode = "current"
+            self.custom_iso = None
+
+        self.result = value
+        self.destroy()
 
     def _on_cancel(self) -> None:
         """Handle Cancel button."""
         self.result = None
+        self.custom_iso = None
         self.destroy()
