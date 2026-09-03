@@ -2,17 +2,17 @@
 """Entry point for Git Manager.
 
 This module is the canonical entry point for the application.
-It delegates to :mod:`push_gui` which contains the GUI implementation
-(`GitManagerGUI` and ``main()``).
+It delegates to :mod:`ui.app` which contains the GUI bootstrap
+(``main()`` → ``GitManagerGUI``).
 
 Run with:
     python main.py
     python -m main
-    python push_gui.py  # legacy, still works
+    python push_gui.py  # legacy, still works via shim
 """
 from __future__ import annotations
 
-from push_gui import main
+from ui.app import main
 
 
 if __name__ == "__main__":
