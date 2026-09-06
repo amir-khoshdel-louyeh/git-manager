@@ -122,3 +122,66 @@ class SettingsDB:
     def set_button_font_size(self, size: int) -> None:
         """Save the button font size."""
         self.set("button_font_size", str(size))
+
+    # --- window / layout persistence -------------------------------------
+
+    def get_window_geometry(self) -> Optional[str]:
+        """Return saved main window geometry string (e.g. '1200x700+100+100')."""
+        return self.get("window_geometry")
+
+    def set_window_geometry(self, geometry: str) -> None:
+        """Save main window geometry string."""
+        self.set("window_geometry", geometry)
+
+    def get_window_maximized(self) -> Optional[bool]:
+        """Return saved maximized state. None means never saved."""
+        raw = self.settings.get("window_maximized")
+        if raw is None:
+            return None
+        return str(raw) == "1"
+
+    def set_window_maximized(self, maximized: bool) -> None:
+        """Save window maximized state."""
+        self.set("window_maximized", "1" if maximized else "0")
+
+    def get_paned_sash_pos(self) -> Optional[int]:
+        """Return saved vertical PanedWindow sash position (pixels from top)."""
+        raw = self.settings.get("paned_sash_pos")
+        if raw is None:
+            return None
+        try:
+            return int(raw)
+        except (ValueError, TypeError):
+            return None
+
+    def set_paned_sash_pos(self, pos: int) -> None:
+        """Save PanedWindow sash position."""
+        self.set("paned_sash_pos", str(int(pos)))
+
+    def get_tree_column_widths(self) -> Optional[Dict[str, int]]:
+        """Return saved Treeview column widths as {column: width}."""
+        raw = self.settings.get("tree_column_widths")
+        if raw is None:
+            return None
+        if isinstance(raw, dict):
+            result: Dict[str, int] = {}
+            for key, value in raw.items():
+                try:
+                    result[str(key)] = int(value)
+                except (ValueError, TypeError):
+                    continue
+            return result if result else None
+        # Back-compat: if stored as JSON string
+        try:
+            parsed = json.loads(str(raw))
+            if isinstance(parsed, dict):
+                return {str(k): int(v) for k, v in parsed.items()}
+        except Exception:
+            pass
+        return None
+
+    def set_tree_column_widths(self, widths: Dict[str, int]) -> None:
+        """Persist Treeview column widths."""
+        # Store as dict so JSON file keeps native object
+        self.settings["tree_column_widths"] = {str(k): int(v) for k, v in widths.items()}
+        self._save_settings()
