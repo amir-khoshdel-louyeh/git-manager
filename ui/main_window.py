@@ -45,9 +45,14 @@ class GitManagerGUI:
         self.states: List[RepoState] = []
         self.auto_refresh_job: Optional[str] = None
         self.operation_in_progress = False
+        # Debounce job ids for layout persistence
+        self._geometry_save_job: Optional[str] = None
+        self._paned_save_job: Optional[str] = None
+        self._column_save_job: Optional[str] = None
 
         self._build_layout()
         self.apply_theme(self.theme_mode)
+        self._restore_layout()
         self.refresh_repos()
         if self.auto_switch_to_local_commit:
             self.switch_all_to_local_commit(skip_busy_check=True)
@@ -105,6 +110,156 @@ class GitManagerGUI:
             self.tree.tag_configure("has_commits", background=has_color)
             self.tree.tag_configure("clean", background=clean_color)
 
+    # --- layout persistence helpers --------------------------------------
+    def _restore_layout(self) -> None:
+        """Restore saved window geometry, column widths and paned sash position."""
+        # Restore tree column widths immediately (widget already exists)
+        widths = self.db.get_tree_column_widths()
+        if widths:
+            for col, w in widths.items():
+                try:
+                    # Clamp to sensible range to avoid broken layout
+                    w = max(20, min(800, int(w)))
+                    self.tree.column(col, width=w)
+                except Exception:
+                    continue
+        # Restore window geometry / maximized state
+        try:
+            maximized = self.db.get_window_maximized()
+            geom = self.db.get_window_geometry()
+            if maximized:
+                try:
+                    self.root.state("zoomed")
+                except tk.TclError:
+                    try:
+                        self.root.attributes("-zoomed", True)
+                    except tk.TclError:
+                        if geom:
+                            self.root.geometry(geom)
+            elif geom:
+                try:
+                    self.root.geometry(geom)
+                except tk.TclError:
+                    pass
+        except Exception:
+            pass
+        # Restore paned sash position after geometry is applied (needs idle)
+        sash = self.db.get_paned_sash_pos()
+        if sash is not None:
+            def _apply_sash() -> None:
+                try:
+                    # Only apply if pane exists and height is realized
+                    if hasattr(self, "paned") and self.paned.winfo_height() > 1:
+                        # Clamp sash to 15%-85% of pane height for safety
+                        h = self.paned.winfo_height()
+                        sash_clamped = max(int(h * 0.15), min(int(h * 0.85), int(sash)))
+                        self.paned.sashpos(0, sash_clamped)
+                    else:
+                        # Retry shortly if not yet mapped
+                        self.root.after(150, _apply_sash)
+                except Exception:
+                    pass
+            self.root.after(150, _apply_sash)
+
+        # Bind persistence events (debounced)
+        try:
+            self.root.bind("<Configure>", self._on_window_configure)
+            self.tree.bind("<ButtonRelease-1>", self._on_tree_column_resize)
+            # Catch separator drag on tree headings (motion then release)
+            self.tree.bind("<B1-Motion>", self._on_tree_column_motion)
+            if hasattr(self, "paned"):
+                self.paned.bind("<ButtonRelease-1>", self._on_paned_sash_release)
+                self.paned.bind("<B1-Motion>", self._on_paned_sash_motion)
+        except Exception:
+            pass
+
+    def _is_window_maximized(self) -> bool:
+        try:
+            if self.root.state() == "zoomed":
+                return True
+        except Exception:
+            pass
+        try:
+            return bool(self.root.attributes("-zoomed"))
+        except Exception:
+            return False
+
+    def _save_window_geometry(self) -> None:
+        try:
+            if self._is_window_maximized():
+                self.db.set_window_maximized(True)
+            else:
+                self.db.set_window_maximized(False)
+                geom = self.root.geometry()
+                # Ignore spurious tiny geometries (e.g. withdrawn 1x1)
+                if geom:
+                    try:
+                        wh = geom.split("+")[0]
+                        w_str, h_str = wh.split("x")
+                        w, h = int(w_str), int(h_str)
+                        if w < 200 or h < 200:
+                            return
+                    except Exception:
+                        pass
+                    self.db.set_window_geometry(geom)
+        except Exception:
+            pass
+
+    def _save_tree_column_widths(self) -> None:
+        try:
+            widths: dict[str, int] = {}
+            for col in ("#0", "name", "commits", "pushed", "branch", "base"):
+                try:
+                    widths[col] = int(self.tree.column(col, option="width"))
+                except Exception:
+                    continue
+            if widths:
+                self.db.set_tree_column_widths(widths)
+        except Exception:
+            pass
+
+    def _save_paned_sash(self) -> None:
+        try:
+            if hasattr(self, "paned"):
+                pos = int(self.paned.sashpos(0))
+                self.db.set_paned_sash_pos(pos)
+        except Exception:
+            pass
+
+    def _on_window_configure(self, event: tk.Event) -> None:  # type: ignore
+        if event.widget is not self.root:
+            return
+        # Debounce: wait 800ms after last resize before saving
+        if self._geometry_save_job is not None:
+            try:
+                self.root.after_cancel(self._geometry_save_job)
+            except Exception:
+                pass
+        self._geometry_save_job = self.root.after(800, self._save_window_geometry)
+
+    def _on_tree_column_resize(self, event: tk.Event | None = None) -> None:  # type: ignore
+        if self._column_save_job is not None:
+            try:
+                self.root.after_cancel(self._column_save_job)
+            except Exception:
+                pass
+        self._column_save_job = self.root.after(400, self._save_tree_column_widths)
+
+    def _on_tree_column_motion(self, event: tk.Event | None = None) -> None:  # type: ignore
+        # Motion handler is intentionally lightweight; actual save on release
+        pass
+
+    def _on_paned_sash_release(self, event: tk.Event | None = None) -> None:  # type: ignore
+        if self._paned_save_job is not None:
+            try:
+                self.root.after_cancel(self._paned_save_job)
+            except Exception:
+                pass
+        self._paned_save_job = self.root.after(400, self._save_paned_sash)
+
+    def _on_paned_sash_motion(self, event: tk.Event | None = None) -> None:  # type: ignore
+        pass
+
     def _build_layout(self) -> None:
         # Action buttons with better styling
         buttons = ttk.Frame(self.root, padding=8)
@@ -122,8 +277,9 @@ class GitManagerGUI:
         ttk.Button(buttons, text="⚙️ Settings", command=self.action_settings, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
 
         # Split main content into resizable panes
-        paned = ttk.PanedWindow(self.root, orient=tk.VERTICAL)
-        paned.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
+        self.paned = ttk.PanedWindow(self.root, orient=tk.VERTICAL)
+        self.paned.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
+        paned = self.paned  # keep local alias for readability
 
         # Repository tree with improved styling
         tree_frame = ttk.Frame(paned)
@@ -294,6 +450,13 @@ class GitManagerGUI:
         if self.operation_in_progress:
             if not self._confirm_exit_during_operation():
                 return
+        # Persist layout before exit (geometry, columns, sash)
+        try:
+            self._save_window_geometry()
+            self._save_tree_column_widths()
+            self._save_paned_sash()
+        except Exception:
+            pass
         self._cancel_auto_refresh()
         self.switch_all_to_local_commit(skip_busy_check=True)
         self.root.destroy()
