@@ -23,11 +23,6 @@ def _detect_base_branch(repo: Path, current_branch: str) -> str:
     if origin_head and origin_head != "HEAD":
         return origin_head.removeprefix("origin/")
 
-    # If no main/master/origin default exists yet, create a real main branch when safe.
-    created_main = _ensure_main_branch(repo, current_branch)
-    if created_main:
-        return created_main
-
     if current_branch and current_branch not in {"HEAD", "local_commit"} and GitOperations.git_ok(
         ["show-ref", "--verify", "--quiet", f"refs/heads/{current_branch}"], cwd=repo
     ):
