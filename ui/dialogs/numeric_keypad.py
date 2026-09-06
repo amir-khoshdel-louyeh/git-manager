@@ -13,11 +13,10 @@ class NumericKeypadDialog(tk.Toplevel):
     """Custom dialog with numeric keypad for entering number of commits.
 
     When ``show_date_options`` is True (used for Move Commits), the dialog also
-    shows:
-    - Last commit info for better experience
-    - Two radio options: "Current date and time" (default) vs "Custom date and time"
-    - Date (YYYY-MM-DD) and Time (HH:MM:SS) entry fields when custom is chosen
-    - Validation that custom datetime is after last commit on base
+    shows a horizontally-split layout:
+    - Left column: number display + large keypad (bigger window)
+    - Right column: last commit info + date/time radios + entries
+    The window is intentionally larger and uses a horizontal grid.
     """
 
     def __init__(
@@ -34,7 +33,9 @@ class NumericKeypadDialog(tk.Toplevel):
     ) -> None:
         super().__init__(parent)
         self.title(title)
-        self.resizable(False, False)
+        # Bigger window: allow resizing horizontally, but keep minsize large
+        self.minsize(880, 520)
+        self.resizable(True, True)
         self.result: Optional[int] = None
         self.minvalue = minvalue
         self.maxvalue = maxvalue
@@ -57,83 +58,103 @@ class NumericKeypadDialog(tk.Toplevel):
         self.transient(parent)
         self.grab_set()
 
-        # Prompt label
-        ttk.Label(self, text=prompt, font=("Helvetica", 11), justify=tk.CENTER, style="Dialog.TLabel").pack(pady=10, padx=20)
+        # Prompt label (spans full width, top)
+        ttk.Label(self, text=prompt, font=("Helvetica", 12, "bold"), justify=tk.CENTER, style="Dialog.TLabel", wraplength=820).pack(pady=(16, 10), padx=20, fill=tk.X)
 
-        # Display value
-        self.value_var = tk.StringVar(value="0")
-        entry_bg = "#1e2228" if theme_mode == "dark" else "#f1f5f9"
-        entry_fg = "#e8e8e8" if theme_mode == "dark" else "#111827"
-        display = tk.Entry(
-            self,
-            textvariable=self.value_var,
-            font=("Helvetica", 14, "bold"),
-            width=15,
-            justify=tk.CENTER,
-            state="readonly",
-            bg=entry_bg,
-            fg=entry_fg,
-            readonlybackground=entry_bg,
-            disabledforeground=entry_fg,
-            relief=tk.SOLID,
-            bd=1,
-        )
-        display.pack(pady=10, padx=20)
+        # ===================== HORIZONTAL GRID CONTENT =====================
+        content = ttk.Frame(self, style="Dialog.TFrame")
+        content.pack(fill=tk.BOTH, expand=True, padx=20, pady=5)
 
-        # Numeric keypad
-        keypad_frame = ttk.Frame(self, style="Dialog.TFrame")
-        keypad_frame.pack(pady=10, padx=20)
-
-        buttons = [
-            ["7", "8", "9"],
-            ["4", "5", "6"],
-            ["1", "2", "3"],
-            ["0", "C", "⌫"],
-        ]
-
-        for row in buttons:
-            row_frame = ttk.Frame(keypad_frame)
-            row_frame.pack()
-            for btn_text in row:
-                btn = ttk.Button(row_frame, text=btn_text, width=5, command=lambda t=btn_text: self._on_key(t))
-                btn.pack(side=tk.LEFT, padx=2, pady=2)
-
-        # --- Date/time options (only for move flow) ---
         if self.show_date_options:
-            separator = ttk.Separator(self, orient=tk.HORIZONTAL)
-            separator.pack(fill=tk.X, padx=20, pady=(8, 0))
+            # Horizontal split: left = number / keypad, right = date options
+            content.columnconfigure(0, weight=1, uniform="col")
+            content.columnconfigure(1, weight=1, uniform="col")
+            content.rowconfigure(0, weight=1)
+
+            # ----- LEFT COLUMN -----
+            left = ttk.LabelFrame(content, text="Number of commits", padding=14, style="Dialog.TLabelframe")
+            left.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=5)
+            left.columnconfigure(0, weight=1)
+
+            # Display value - bigger
+            self.value_var = tk.StringVar(value="0")
+            entry_bg = "#1e2228" if theme_mode == "dark" else "#f1f5f9"
+            entry_fg = "#e8e8e8" if theme_mode == "dark" else "#111827"
+            display = tk.Entry(
+                left,
+                textvariable=self.value_var,
+                font=("Helvetica", 18, "bold"),
+                width=18,
+                justify=tk.CENTER,
+                state="readonly",
+                bg=entry_bg,
+                fg=entry_fg,
+                readonlybackground=entry_bg,
+                disabledforeground=entry_fg,
+                relief=tk.SOLID,
+                bd=1,
+            )
+            display.grid(row=0, column=0, pady=(8, 12), padx=10, sticky="ew")
+
+            # Numeric keypad - bigger buttons, grid layout
+            keypad_frame = ttk.Frame(left, style="Dialog.TFrame")
+            keypad_frame.grid(row=1, column=0, pady=6, padx=10)
+
+            buttons = [
+                ["7", "8", "9"],
+                ["4", "5", "6"],
+                ["1", "2", "3"],
+                ["0", "C", "⌫"],
+            ]
+
+            for r, row in enumerate(buttons):
+                row_frame = ttk.Frame(keypad_frame, style="Dialog.TFrame")
+                row_frame.grid(row=r, column=0, pady=3)
+                for c, btn_text in enumerate(row):
+                    btn = ttk.Button(row_frame, text=btn_text, width=7, command=lambda t=btn_text: self._on_key(t))
+                    btn.grid(row=0, column=c, padx=5, pady=3, ipadx=4, ipady=8)
+                    # Make buttons more tactile: larger padding
+
+            # Hint label under keypad
+            ttk.Label(left, text="Use keypad or keyboard (0-9, Backspace, C)", font=("Helvetica", 8, "italic"), style="Dialog.TLabel").grid(row=2, column=0, pady=(10, 4))
+
+            # ----- RIGHT COLUMN -----
+            right = ttk.Frame(content, style="Dialog.TFrame")
+            right.grid(row=0, column=1, sticky="nsew", padx=(10, 0), pady=5)
+            right.columnconfigure(0, weight=1)
 
             # Last commit info for better experience
             if self.last_commit_info:
-                info_frame = ttk.LabelFrame(self, text="Last commit on base", padding=8, style="Dialog.TLabelframe")
-                info_frame.pack(fill=tk.X, padx=20, pady=(8, 0))
-                # Truncate for display but keep full in tooltip-ish
+                info_frame = ttk.LabelFrame(right, text="Last commit on base", padding=10, style="Dialog.TLabelframe")
+                info_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+                info_frame.columnconfigure(0, weight=1)
                 info_label = ttk.Label(
                     info_frame,
                     text=self.last_commit_info,
-                    font=("Courier", 8),
-                    wraplength=420,
+                    font=("Courier", 9),
+                    wraplength=380,
                     justify=tk.LEFT,
                     style="Dialog.TLabel",
                 )
-                info_label.pack(anchor=tk.W, fill=tk.X)
+                info_label.grid(row=0, column=0, sticky="w")
                 ttk.Label(
                     info_frame,
                     text="Custom date/time must be after this commit.",
                     font=("Helvetica", 8, "italic"),
                     style="Dialog.TLabel",
-                ).pack(anchor=tk.W, pady=(4, 0))
+                ).grid(row=1, column=0, sticky="w", pady=(6, 0))
             else:
                 ttk.Label(
-                    self,
+                    right,
                     text="No prior commits on base (first commit). Any date/time is allowed.",
-                    font=("Helvetica", 8, "italic"),
+                    font=("Helvetica", 9, "italic"),
                     style="Dialog.TLabel",
-                    wraplength=420,
-                ).pack(pady=(8, 0), padx=20)
+                    wraplength=380,
+                ).grid(row=0, column=0, sticky="ew", pady=(0, 10))
 
-            date_frame = ttk.LabelFrame(self, text="Commit date/time", padding=10, style="Dialog.TLabelframe")
-            date_frame.pack(fill=tk.X, padx=20, pady=10)
+            date_frame = ttk.LabelFrame(right, text="Commit date/time", padding=12, style="Dialog.TLabelframe")
+            date_frame.grid(row=1, column=0, sticky="ew", pady=5)
+            date_frame.columnconfigure(0, weight=1)
 
             self.date_mode_var = tk.StringVar(value="current")
             ttk.Radiobutton(
@@ -143,7 +164,7 @@ class NumericKeypadDialog(tk.Toplevel):
                 value="current",
                 style="Dialog.TRadiobutton",
                 command=self._on_date_mode_change,
-            ).pack(anchor=tk.W, pady=2)
+            ).grid(row=0, column=0, sticky="w", pady=3)
             ttk.Radiobutton(
                 date_frame,
                 text="Custom date and time",
@@ -151,37 +172,86 @@ class NumericKeypadDialog(tk.Toplevel):
                 value="custom",
                 style="Dialog.TRadiobutton",
                 command=self._on_date_mode_change,
-            ).pack(anchor=tk.W, pady=2)
+            ).grid(row=1, column=0, sticky="w", pady=3)
 
             custom_frame = ttk.Frame(date_frame, style="Dialog.TFrame")
-            custom_frame.pack(fill=tk.X, pady=(8, 0))
+            custom_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+            custom_frame.columnconfigure(1, weight=1)
             self._custom_frame = custom_frame
 
             self.custom_date_var = tk.StringVar(value=now_date_str())
             self.custom_time_var = tk.StringVar(value=now_time_str())
 
-            # Date row
-            date_row = ttk.Frame(custom_frame, style="Dialog.TFrame")
-            date_row.pack(fill=tk.X, pady=2)
-            ttk.Label(date_row, text="Date (YYYY-MM-DD):", font=("Helvetica", 9), style="Dialog.TLabel", width=18).pack(side=tk.LEFT)
-            self.custom_date_entry = ttk.Entry(date_row, textvariable=self.custom_date_var, width=14, style="Dialog.TEntry")
-            self.custom_date_entry.pack(side=tk.LEFT, padx=(8, 0))
+            # Date row - grid
+            ttk.Label(custom_frame, text="Date (YYYY-MM-DD):", font=("Helvetica", 10), style="Dialog.TLabel").grid(row=0, column=0, sticky="w", pady=4, padx=(4, 8))
+            self.custom_date_entry = ttk.Entry(custom_frame, textvariable=self.custom_date_var, width=20, style="Dialog.TEntry", font=("Helvetica", 10))
+            self.custom_date_entry.grid(row=0, column=1, sticky="ew", pady=4, padx=(0, 4))
 
-            # Time row
-            time_row = ttk.Frame(custom_frame, style="Dialog.TFrame")
-            time_row.pack(fill=tk.X, pady=2)
-            ttk.Label(time_row, text="Time (HH:MM:SS):", font=("Helvetica", 9), style="Dialog.TLabel", width=18).pack(side=tk.LEFT)
-            self.custom_time_entry = ttk.Entry(time_row, textvariable=self.custom_time_var, width=14, style="Dialog.TEntry")
-            self.custom_time_entry.pack(side=tk.LEFT, padx=(8, 0))
+            # Time row - grid
+            ttk.Label(custom_frame, text="Time (HH:MM:SS):", font=("Helvetica", 10), style="Dialog.TLabel").grid(row=1, column=0, sticky="w", pady=4, padx=(4, 8))
+            self.custom_time_entry = ttk.Entry(custom_frame, textvariable=self.custom_time_var, width=20, style="Dialog.TEntry", font=("Helvetica", 10))
+            self.custom_time_entry.grid(row=1, column=1, sticky="ew", pady=4, padx=(0, 4))
+
+            # Helper hint
+            ttk.Label(custom_frame, text="Example: 2026-09-03 and 14:30:00", font=("Helvetica", 8, "italic"), style="Dialog.TLabel").grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0), padx=4)
 
             # Initially disabled because current is default
             self._set_custom_entries_state(tk.DISABLED)
 
-        # OK and Cancel buttons
+        else:
+            # Simple mode: no date options, single centered column but still big
+            content.columnconfigure(0, weight=1)
+            content.rowconfigure(0, weight=1)
+
+            single = ttk.LabelFrame(content, text="Select number", padding=16, style="Dialog.TLabelframe")
+            single.grid(row=0, column=0, sticky="nsew", padx=40)
+            single.columnconfigure(0, weight=1)
+
+            self.value_var = tk.StringVar(value="0")
+            entry_bg = "#1e2228" if theme_mode == "dark" else "#f1f5f9"
+            entry_fg = "#e8e8e8" if theme_mode == "dark" else "#111827"
+            display = tk.Entry(
+                single,
+                textvariable=self.value_var,
+                font=("Helvetica", 18, "bold"),
+                width=20,
+                justify=tk.CENTER,
+                state="readonly",
+                bg=entry_bg,
+                fg=entry_fg,
+                readonlybackground=entry_bg,
+                disabledforeground=entry_fg,
+                relief=tk.SOLID,
+                bd=1,
+            )
+            display.grid(row=0, column=0, pady=(8, 14), sticky="ew")
+
+            keypad_frame = ttk.Frame(single, style="Dialog.TFrame")
+            keypad_frame.grid(row=1, column=0, pady=6)
+
+            buttons = [
+                ["7", "8", "9"],
+                ["4", "5", "6"],
+                ["1", "2", "3"],
+                ["0", "C", "⌫"],
+            ]
+
+            for r, row in enumerate(buttons):
+                row_frame = ttk.Frame(keypad_frame, style="Dialog.TFrame")
+                row_frame.grid(row=r, column=0, pady=3)
+                for c, btn_text in enumerate(row):
+                    btn = ttk.Button(row_frame, text=btn_text, width=8, command=lambda t=btn_text: self._on_key(t))
+                    btn.grid(row=0, column=c, padx=5, pady=3, ipadx=4, ipady=10)
+
+        # OK and Cancel buttons - bottom, centered, bigger
         button_frame = ttk.Frame(self, style="Dialog.TFrame")
-        button_frame.pack(pady=10)
-        ttk.Button(button_frame, text="OK", command=self._on_ok, style="Dialog.TButton").pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=self._on_cancel, style="Dialog.TButton").pack(side=tk.LEFT, padx=5)
+        button_frame.pack(pady=16, fill=tk.X)
+        inner_btn = ttk.Frame(button_frame, style="Dialog.TFrame")
+        inner_btn.pack(anchor=tk.CENTER)
+        ok_btn = ttk.Button(inner_btn, text="OK", command=self._on_ok, style="Dialog.TButton", width=12)
+        ok_btn.pack(side=tk.LEFT, padx=8, ipady=4)
+        cancel_btn = ttk.Button(inner_btn, text="Cancel", command=self._on_cancel, style="Dialog.TButton", width=12)
+        cancel_btn.pack(side=tk.LEFT, padx=8, ipady=4)
 
         # Bind keyboard events
         self.bind("<Key-0>", lambda e: self._on_key("0"))
@@ -199,8 +269,16 @@ class NumericKeypadDialog(tk.Toplevel):
         self.bind("<Return>", lambda e: self._on_ok())
         self.bind("<Escape>", lambda e: self._on_cancel())
 
-        # Center on parent
+        # Center on parent and enforce bigger geometry
         self.update_idletasks()
+        # Enforce larger size for move dialog
+        if self.show_date_options:
+            cur_w = self.winfo_width()
+            cur_h = self.winfo_height()
+            target_w = max(cur_w, 880)
+            target_h = max(cur_h, 520)
+            self.geometry(f"{target_w}x{target_h}")
+            self.update_idletasks()
         x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_width() // 2)
         y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.winfo_height() // 2)
         self.geometry(f"+{x}+{y}")

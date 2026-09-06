@@ -231,8 +231,24 @@ class GitManagerGUI:
         
         self.status_var.set(f"✓ Loaded {len(states)} repositories from {base_dir}")
 
+    def _has_origin_main(self, repo: Path) -> bool:
+        """Check strict prerequisite: origin/main must exist as remote-tracking branch."""
+        return GitOperations.git_ok(["show-ref", "--verify", "--quiet", "refs/remotes/origin/main"], cwd=repo)
+
+    def _has_local_commit(self, repo: Path) -> bool:
+        """Check if local_commit branch exists locally."""
+        return GitOperations.git_ok(["show-ref", "--verify", "--quiet", "refs/heads/local_commit"], cwd=repo)
+
     def switch_all_to_local_commit(self, skip_busy_check: bool = False) -> None:
-        """Switch all repositories to local_commit branch."""
+        """Switch all repositories to local_commit branch.
+
+        Strict workflow (new repo):
+        1) Prerequisite origin/main must exist first before any automation.
+        2) If local_commit does NOT exist → create it ONLY upon open/close if origin/main exists.
+        3) If local_commit already exists → do not re-create, just proceed (checkout if needed).
+        Under no circumstances will we attempt to trigger/create local_commit during
+        open/close until origin/main is confirmed for newly created repositories.
+        """
         if not self.states:
             return
         if not skip_busy_check and not self._start_operation("switch all repositories to local_commit"):
@@ -242,12 +258,25 @@ class GitManagerGUI:
             self.append_output("🔄 Ensuring all repositories are on local_commit branch...\n")
             for state in self.states:
                 try:
+                    # Live checks (state may be stale)
+                    local_exists = self._has_local_commit(state.path)
+                    has_origin_main = self._has_origin_main(state.path)
+
+                    # Key Rule: never attempt to create local_commit during open/close
+                    # until origin/main is confirmed for this repo.
+                    if not local_exists and not has_origin_main:
+                        self.append_output(
+                            f"  ⏭ {state.name}: origin/main not found — skipping local_commit creation (prerequisite)\n"
+                        )
+                        continue
+
                     if state.current_branch != "local_commit":
-                        if state.local_exists:
+                        if local_exists:
+                            # Conditional logic: already exists → just checkout, do not re-create
                             BranchManager.checkout(state.path, "local_commit")
                             self.append_output(f"  ✓ {state.name}: switched to local_commit\n")
                         else:
-                            # Create local_commit from base branch
+                            # local_commit does NOT exist → create upon open/close (prerequisite already ensured)
                             BranchManager.switch_to_local_commit(state.path, state.base_branch)
                             self.append_output(f"  ✓ {state.name}: created and switched to local_commit\n")
                     else:
