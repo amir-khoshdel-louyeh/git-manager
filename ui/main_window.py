@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 from pathlib import Path
 from typing import List, Optional
 from datetime import datetime
@@ -514,24 +514,96 @@ class GitManagerGUI:
                 self.append_output(f"⚠️  Could not abort rebase cleanly: {str(exc)}\n")
 
     def _choose_conflict_resolution(self, commit: str, conflicts: str) -> str:
-        prompt = (
-            f"Cherry-pick conflicts for {commit[:7]}\n\n"
-            f"Conflicted files:\n{conflicts}\n\n"
-            "Choose: 1) Keep base (ours)  2) Incoming (theirs)  3) Abort  4) Skip"
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Resolve cherry-pick conflict")
+        dialog.resizable(True, True)
+        dialog.minsize(520, 360)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        colors = apply_theme_style(
+            dialog,
+            self.theme_mode,
+            self.button_font_size,
+            self.table_font_size,
+            self.output_font_size,
         )
-        choice = simpledialog.askstring("Conflicts", prompt, parent=self.root)
-        if not choice:
+        result: list[Optional[str]] = [None]
+
+        content = ttk.Frame(dialog, style="Dialog.TFrame", padding=20)
+        content.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(
+            content,
+            text="Cherry-pick conflict requires a decision",
+            font=("Helvetica", 13, "bold"),
+            style="Dialog.TLabel",
+        ).pack(anchor=tk.W)
+        ttk.Label(
+            content,
+            text=f"Commit {commit[:7]} has changes that overlap with the target branch.",
+            style="Dialog.TLabel",
+        ).pack(anchor=tk.W, pady=(5, 14))
+
+        files_frame = ttk.LabelFrame(
+            content,
+            text=f"Conflicted files ({len(conflicts.splitlines())})",
+            style="Dialog.TLabelframe",
+            padding=8,
+        )
+        files_frame.pack(fill=tk.BOTH, expand=True)
+        file_list = tk.Listbox(
+            files_frame,
+            activestyle="none",
+            bg=colors["text_bg"],
+            fg=colors["fg"],
+            selectbackground=colors["selected_bg"],
+            selectforeground=colors["selected_fg"],
+            relief=tk.FLAT,
+            highlightthickness=0,
+            font=("Courier", max(9, self.output_font_size)),
+        )
+        scrollbar = ttk.Scrollbar(files_frame, orient=tk.VERTICAL, command=file_list.yview)
+        file_list.configure(yscrollcommand=scrollbar.set)
+        file_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        for filename in conflicts.splitlines():
+            file_list.insert(tk.END, filename)
+
+        ttk.Label(
+            content,
+            text="Keep base preserves the target branch. Use incoming to apply the selected commit’s version.",
+            style="Dialog.TLabel",
+            wraplength=700,
+        ).pack(anchor=tk.W, pady=(12, 4))
+
+        buttons = ttk.Frame(content, style="Dialog.TFrame")
+        buttons.pack(fill=tk.X, pady=(12, 0))
+
+        def finish(choice: str) -> None:
+            result[0] = choice
+            dialog.destroy()
+
+        ttk.Button(buttons, text="Keep base", command=lambda: finish("ours"), style="Dialog.TButton").pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(buttons, text="Use incoming", command=lambda: finish("theirs"), style="Dialog.TButton").pack(side=tk.LEFT, padx=6)
+        ttk.Button(buttons, text="Skip commit", command=lambda: finish("skip"), style="Dialog.TButton").pack(side=tk.RIGHT, padx=(6, 0))
+        ttk.Button(buttons, text="Abort", command=lambda: finish("abort"), style="Dialog.TButton").pack(side=tk.RIGHT, padx=6)
+
+        dialog.protocol("WM_DELETE_WINDOW", lambda: finish("abort"))
+        dialog.bind("<Escape>", lambda event: finish("abort"))
+        dialog.bind("<KeyPress-1>", lambda event: finish("ours"))
+        dialog.bind("<KeyPress-2>", lambda event: finish("theirs"))
+        dialog.bind("<KeyPress-3>", lambda event: finish("abort"))
+        dialog.bind("<KeyPress-4>", lambda event: finish("skip"))
+        dialog.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - dialog.winfo_width()) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
+        dialog.focus_set()
+        self.root.wait_window(dialog)
+
+        if result[0] is None:
             raise GitManagerError("Conflict resolution cancelled")
-        choice = choice.strip()
-        if choice == "1":
-            return "ours"
-        if choice == "2":
-            return "theirs"
-        if choice == "3":
-            return "abort"
-        if choice == "4":
-            return "skip"
-        raise GitManagerError("Invalid conflict resolution choice")
+        return result[0]
 
     def _backup_local_commit(self, repo: Path) -> str:
         backup_name = f"backup_local_commit_{datetime.now().strftime('%Y%m%d%H%M%S')}"
@@ -1107,19 +1179,50 @@ class GitManagerGUI:
                 
                 for commit in remaining_original:
                     try:
-                        GitOperations.run_git(["cherry-pick", commit], cwd=repo)
+                        GitOperations.run_git(["cherry-pick", "--no-commit", commit], cwd=repo)
                     except GitManagerError:
-                        # Check if it's an empty commit (already applied)
-                        status = GitOperations.run_git(["status"], cwd=repo)
-                        if "nothing to commit" in status:
+                        conflict_names = GitOperations.run_git(["diff", "--name-only", "--diff-filter=U"], cwd=repo).strip()
+                        if conflict_names:
+                            try:
+                                choice = self._choose_conflict_resolution(commit, conflict_names)
+                            except GitManagerError as choice_err:
+                                GitOperations.run_git(["cherry-pick", "--abort"], cwd=repo)
+                                raise choice_err
+
+                            if choice == "ours":
+                                GitOperations.run_git(["checkout", "--ours", "."], cwd=repo)
+                                GitOperations.run_git(["add", "."], cwd=repo)
+                                GitOperations.run_git(["commit", "-C", commit], cwd=repo)
+                                self.append_output(f"✓ Resolved with ours for {commit[:7]}\n")
+                                continue
+
+                            if choice == "theirs":
+                                GitOperations.run_git(["checkout", "--theirs", "."], cwd=repo)
+                                GitOperations.run_git(["add", "."], cwd=repo)
+                                GitOperations.run_git(["commit", "-C", commit], cwd=repo)
+                                self.append_output(f"✓ Resolved with theirs for {commit[:7]}\n")
+                                continue
+
+                            if choice == "skip":
+                                GitOperations.run_git(["cherry-pick", "--abort"], cwd=repo)
+                                self.append_output(f"⊘ Skipping commit {commit[:7]} after conflicts\n")
+                                continue
+
+                            GitOperations.run_git(["cherry-pick", "--abort"], cwd=repo)
+                            raise GitManagerError("Cherry-pick aborted for manual resolution")
+
+                        # A clean, empty patch means the commit is already represented.
+                        if GitOperations.git_ok(["diff", "--quiet"], cwd=repo):
                             self.append_output(f"⊘ Skipping empty commit {commit[:7]} (already on {base_branch})\n")
-                            GitOperations.run_git(["cherry-pick", "--skip"], cwd=repo)
+                            GitOperations.run_git(["cherry-pick", "--abort"], cwd=repo)
                             continue
                         # Otherwise abort and raise error
                         GitOperations.run_git(["cherry-pick", "--abort"], cwd=repo)
                         raise GitManagerError(
                             f"Cherry-pick failed while rewriting local_commit for commit {commit}. Resolve manually."
                         )
+                    else:
+                        GitOperations.run_git(["commit", "-C", commit], cwd=repo)
                 self.append_output("✅ local_commit updated to reflect remaining commits.\n")
             else:
                 # All commits were moved - simply sync local_commit to base
