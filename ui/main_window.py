@@ -692,6 +692,27 @@ class GitManagerGUI:
                 messagebox.showinfo("No commits", "No commits to move.")
                 return
 
+            # Fetch last commit on base for date validation and display
+            last_commit_info = None
+            last_commit_iso = None
+            try:
+                if GitOperations.git_ok(["rev-parse", "--verify", "--quiet", start_ref], cwd=repo):
+                    try:
+                        last_commit_info = GitOperations.run_git(
+                            ["log", "-1", "--date=iso", "--pretty=format:%h  %ad  %s", start_ref], cwd=repo
+                        ).strip()
+                        last_commit_iso = GitOperations.run_git(
+                            ["log", "-1", "--pretty=format:%aI", start_ref], cwd=repo
+                        ).strip()
+                        if not last_commit_info:
+                            last_commit_info = None
+                            last_commit_iso = None
+                    except GitManagerError:
+                        last_commit_info = None
+                        last_commit_iso = None
+            except GitManagerError:
+                pass
+
             dialog = NumericKeypadDialog(
                 self.root,
                 "Move commits",
@@ -699,11 +720,36 @@ class GitManagerGUI:
                 minvalue=1,
                 maxvalue=pending,
                 theme_mode=self.theme_mode,
+                show_date_options=True,
+                last_commit_info=last_commit_info,
+                last_commit_iso=last_commit_iso,
             )
             self.root.wait_window(dialog)
             num = dialog.result
             if num is None:
                 return
+            # Determine commit date/time to use
+            if getattr(dialog, "date_mode", "current") == "custom" and getattr(dialog, "custom_iso", None):
+                iso_value = dialog.custom_iso  # already validated to be after last commit
+                self.append_output(f"📅 Using custom date/time: {iso_value} (after last commit {last_commit_iso or 'N/A'})\n")
+            else:
+                iso_value = now_iso()
+                if last_commit_iso:
+                    self.append_output(f"📅 Using current date/time: {iso_value}\n")
+            # Extra safety: ensure chosen date is after last commit even if dialog validation was bypassed
+            if last_commit_iso:
+                try:
+                    from utils.time_utils import is_after_last_commit as _is_after
+
+                    if not _is_after(iso_value, last_commit_iso):
+                        raise GitManagerError(
+                            f"Chosen date/time {iso_value} must be after last commit on {base_branch} ({last_commit_iso}). "
+                            f"Last commit info: {last_commit_info}"
+                        )
+                except GitManagerError:
+                    raise
+                except Exception:
+                    pass
 
             original_branch = GitOperations.run_git(["branch", "--show-current"], cwd=repo).strip() or "HEAD"
             if not WorkingTreeManager.is_clean(repo):
@@ -731,7 +777,7 @@ class GitManagerGUI:
             temp_branch = f"tmp_git_manager_{datetime.now().strftime('%Y%m%d%H%M%S')}"
             GitOperations.run_git(["branch", temp_branch, base_before], cwd=repo)
             BranchManager.checkout(repo, temp_branch)
-            now_iso_value = now_iso()
+            now_iso_value = iso_value  # current or custom, already validated
             for idx, commit in enumerate(commits):
                 remaining = len(commits) - idx - 1
                 subject = GitOperations.run_git(["show", "-s", "--format=%s", commit], cwd=repo).strip()
@@ -830,12 +876,12 @@ class GitManagerGUI:
                         f"Remote default branch is '{remote_head}', but target is '{base_branch}'."
                     )
 
-            # 2) Ensure author date day equals today's day for all moved commits
+            # 2) Ensure author date day equals chosen date's day for all moved commits
             dates = GitOperations.run_git(["log", "-n", str(processed_count), temp_branch, "--date=short", "--pretty=format:%ad"], cwd=repo).splitlines()
-            today_str = now_iso()[:10]
-            bad_dates = [d for d in dates if d and d != today_str]
+            expected_date_str = iso_value[:10]
+            bad_dates = [d for d in dates if d and d != expected_date_str]
             if bad_dates:
-                raise GitManagerError(f"Found {len(bad_dates)} commit(s) with author date not equal to today")
+                raise GitManagerError(f"Found {len(bad_dates)} commit(s) with author date not equal to {expected_date_str}")
 
             # 3) Ensure author email matches local git config (so GitHub can attribute contributions)
             emails = GitOperations.run_git(["log", "-n", str(processed_count), temp_branch, "--pretty=format:%ae"], cwd=repo).splitlines()
