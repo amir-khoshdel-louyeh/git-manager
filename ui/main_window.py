@@ -831,12 +831,34 @@ class GitManagerGUI:
                 return
 
             target, reset_type = dialog.result
-            if reset_type == "hard" and not messagebox.askyesno(
-                "Confirm Hard Reset",
-                f"Hard reset will discard uncommitted changes and move the branch to {target}. Continue?",
-                parent=self.root,
-            ):
-                return
+            if reset_type == "hard":
+                # Extra safety: check actual dirty state including untracked files.
+                # is_clean now uses `status --porcelain` so untracked is visible.
+                is_dirty = not WorkingTreeManager.is_clean(state.path)
+                if is_dirty:
+                    try:
+                        status = GitOperations.run_git(["status", "--porcelain"], cwd=state.path).strip()
+                        preview = "\n".join(status.splitlines()[:10])
+                        if len(status.splitlines()) > 10:
+                            preview += "\n..."
+                    except GitManagerError:
+                        preview = ""
+                    detail = f"\n\nDirty files:\n{preview}" if preview else ""
+                    if not messagebox.askyesno(
+                        "Confirm Hard Reset",
+                        f"Hard reset will discard staged and unstaged tracked changes and move the branch to {target}.\n"
+                        f"Working tree is dirty (including untracked files shown below) – tracked changes will be PERMANENTLY LOST. "
+                        f"Untracked files will remain on disk after reset.{detail}\n\nContinue?",
+                        parent=self.root,
+                    ):
+                        return
+                else:
+                    if not messagebox.askyesno(
+                        "Confirm Hard Reset",
+                        f"Hard reset will discard uncommitted changes and move the branch to {target}. Continue?",
+                        parent=self.root,
+                    ):
+                        return
 
             self.append_output(f"🔁 Resetting {state.name} to {target} with --{reset_type}...\n")
             GitOperations.run_git(["reset", f"--{reset_type}", target], cwd=state.path)
@@ -861,7 +883,7 @@ class GitManagerGUI:
         try:
             GitConfig.ensure_identity(repo)
 
-            if GitOperations.git_ok(["diff", "--quiet"], cwd=repo) and GitOperations.git_ok(["diff", "--cached", "--quiet"], cwd=repo):
+            if WorkingTreeManager.is_clean(repo):
                 messagebox.showinfo("No changes", "There are no changes to commit in the selected repository.")
                 return
 

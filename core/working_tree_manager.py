@@ -12,7 +12,14 @@ class WorkingTreeManager:
 
     @staticmethod
     def is_clean(repo: Path) -> bool:
-        return GitOperations.git_ok(["diff", "--quiet"], cwd=repo) and GitOperations.git_ok(["diff", "--cached", "--quiet"], cwd=repo)
+        # Use porcelain status so untracked files are also considered dirty
+        # (previous diff --quiet checks missed untracked files).
+        try:
+            status = GitOperations.run_git(["status", "--porcelain"], cwd=repo)
+        except Exception:
+            # If git status fails, treat as dirty to be safe (conservative)
+            return False
+        return not bool(status.strip())
 
     @staticmethod
     def stash(repo: Path, message: str) -> None:
