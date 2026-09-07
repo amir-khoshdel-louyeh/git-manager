@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Sequence
@@ -27,7 +28,8 @@ class GitOperations:
         )
         if result.returncode != 0:
             stderr = result.stderr.strip() or result.stdout.strip()
-            raise GitManagerError(f"git {' '.join(args)} failed in {cwd}: {stderr}")
+            quoted = " ".join(shlex.quote(a) for a in args)
+            raise GitManagerError(f"git {quoted} failed in {cwd}: {stderr}")
         return result.stdout
 
     @staticmethod
@@ -45,7 +47,8 @@ class GitOperations:
         )
         if result.returncode != 0:
             stderr = result.stderr.strip() or result.stdout.strip()
-            raise GitManagerError(f"git {' '.join(args)} failed in {cwd}: {stderr}")
+            quoted = " ".join(shlex.quote(a) for a in args)
+            raise GitManagerError(f"git {quoted} failed in {cwd}: {stderr}")
         return result.stdout
 
     @staticmethod

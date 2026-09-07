@@ -132,10 +132,6 @@ def apply_theme(
     style.configure("Dialog.TLabelframe.Label", background=frame_bg, foreground=fg)
     style.configure("Dialog.TRadiobutton", background=frame_bg, foreground=fg)
     style.configure("Dialog.TSpinbox", fieldbackground=entry_bg, foreground=entry_fg, background=entry_bg)
-    style.map("Action.TButton",
-        background=[('active', button_active), ('pressed', button_active)],
-        foreground=[('disabled', '#888888')]
-    )
     style.configure(
         "Treeview",
         background=text_bg,

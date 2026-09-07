@@ -70,7 +70,6 @@ def parse_iso_to_dt(iso_str: str) -> datetime:
         "%Y-%m-%dT%H:%M:%S",
         "%Y-%m-%d %H:%M:%S %z",
         "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%dT%H:%M:%S+%f",
     ):
         try:
             # Handle colon in tz like +00:00 → +0000 for strptime

@@ -315,7 +315,11 @@ class NumericKeypadDialog(tk.Toplevel):
                 self.value_var.set("0")
         else:  # Digit
             if current == "0":
-                self.value_var.set(key)
+                # Block standalone 0 when minvalue >0 (e.g., min=1)
+                if key == "0" and self.minvalue > 0:
+                    return
+                if int(key) <= self.maxvalue:
+                    self.value_var.set(key)
             else:
                 new_val = current + key
                 if int(new_val) <= self.maxvalue:
