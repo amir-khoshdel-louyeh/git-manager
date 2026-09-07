@@ -496,6 +496,10 @@ class GitManagerGUI:
             self._cancel_auto_refresh()
 
     def _auto_refresh_callback(self) -> None:
+        if self.operation_in_progress:
+            # Defer refresh while a move/commit/etc. is running to avoid interleaving git ops
+            self._schedule_auto_refresh()
+            return
         self.refresh_repos()
         self._schedule_auto_refresh()
 
@@ -1278,8 +1282,9 @@ class GitManagerGUI:
                             GitOperations.run_git(["cherry-pick", "--abort"], cwd=repo)
                             raise GitManagerError("Cherry-pick aborted for manual resolution")
 
-                        # A clean, empty patch means the commit is already represented.
-                        if GitOperations.git_ok(["diff", "--quiet"], cwd=repo):
+                        # Consistent empty-check with first loop (staged, not working tree)
+                        # Use --cached to detect staged changes after --no-commit
+                        if GitOperations.git_ok(["diff", "--cached", "--quiet"], cwd=repo):
                             self.append_output(f"⊘ Skipping empty commit {commit[:7]} (already on {base_branch})\n")
                             GitOperations.run_git(["cherry-pick", "--abort"], cwd=repo)
                             continue
@@ -1289,6 +1294,7 @@ class GitManagerGUI:
                             f"Cherry-pick failed while rewriting local_commit for commit {commit}. Resolve manually."
                         )
                     else:
+                        # Preserve original author/date for remaining commits (intentionally different from moved commits which use new date)
                         GitOperations.run_git(["commit", "-C", commit], cwd=repo)
                 self.append_output("✅ local_commit updated to reflect remaining commits.\n")
             else:
@@ -1305,9 +1311,29 @@ class GitManagerGUI:
                     WorkingTreeManager.pop_stash(repo)
                 except GitManagerError as exc:
                     self.append_output(f"⚠️ Stash pop failed: {str(exc)}\nResolve manually with 'git stash pop'\n")
+            else:
+                # Restore original branch when no stash – previously stayed on local_commit
+                if original_branch != "HEAD" and original_branch not in (base_branch, "local_commit"):
+                    try:
+                        if GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{original_branch}"], cwd=repo):
+                            cur = GitOperations.run_git(["branch", "--show-current"], cwd=repo).strip()
+                            if cur != original_branch:
+                                BranchManager.checkout(repo, original_branch)
+                    except GitManagerError:
+                        pass
+                elif original_branch == base_branch:
+                    try:
+                        cur = GitOperations.run_git(["branch", "--show-current"], cwd=repo).strip()
+                        if cur != base_branch:
+                            BranchManager.checkout(repo, base_branch)
+                    except GitManagerError:
+                        pass
 
             if temp_branch and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{temp_branch}"], cwd=repo):
-                GitOperations.run_git(["branch", "-D", temp_branch], cwd=repo)
+                try:
+                    GitOperations.run_git(["branch", "-D", temp_branch], cwd=repo)
+                except GitManagerError:
+                    pass
                 temp_branch = None
             self.refresh_repos()
             self.append_output("✅ Move complete. local_commit and the base branch are now updated.\n")
@@ -1336,12 +1362,25 @@ class GitManagerGUI:
                         GitOperations.run_git(["branch", "-D", temp_branch], cwd=repo)
                     except GitManagerError:
                         pass
+                    temp_branch = None
+                # Always restore original branch, not just when stashed
+                if original_branch != "HEAD":
+                    try:
+                        if GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{original_branch}"], cwd=repo):
+                            BranchManager.checkout(repo, original_branch)
+                    except GitManagerError:
+                        pass
                 if stashed:
                     try:
-                        BranchManager.checkout(repo, original_branch)
                         WorkingTreeManager.pop_stash(repo)
                     except GitManagerError:
                         self.append_output("⚠️ Rollback stash pop failed. Resolve manually with 'git stash pop'\n")
             messagebox.showerror("Operation Failed", "An error occurred. Check the output panel for details.")
         finally:
+            # Guarantee temp_branch cleanup even if exception occurred before except block
+            if temp_branch and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{temp_branch}"], cwd=repo):
+                try:
+                    GitOperations.run_git(["branch", "-D", temp_branch], cwd=repo)
+                except GitManagerError:
+                    pass
             self._end_operation()

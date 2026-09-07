@@ -1,5 +1,7 @@
 """Settings file for persisting user preferences."""
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -27,15 +29,55 @@ class SettingsDB:
                 with self.file_path.open("r", encoding="utf-8") as handle:
                     self.settings = json.load(handle)
             except (json.JSONDecodeError, OSError):
+                # Backup corrupt file instead of silently losing it
+                try:
+                    backup = self.file_path.with_suffix(".json.corrupt.bak")
+                    # Avoid overwriting existing backup with timestamp
+                    if backup.exists():
+                        backup = self.file_path.with_name(f"{self.file_path.stem}.corrupt.{os.getpid()}.bak")
+                    self.file_path.rename(backup)
+                except OSError:
+                    pass
                 self.settings = {}
         else:
             self.settings: Dict[str, Any] = {}
             self._save_settings()
 
     def _save_settings(self) -> None:
-        """Persist settings to the JSON file."""
-        with self.file_path.open("w", encoding="utf-8") as handle:
-            json.dump(self.settings, handle, indent=2, ensure_ascii=False)
+        """Persist settings to the JSON file atomically."""
+        self.file_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path: Path | None = None
+        try:
+            fd, tmp_name = tempfile.mkstemp(dir=str(self.file_path.parent), prefix=".settings.", suffix=".tmp")
+            tmp_path = Path(tmp_name)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    json.dump(self.settings, handle, indent=2, ensure_ascii=False)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                # Atomic replace
+                os.replace(str(tmp_path), str(self.file_path))
+                # Fsync directory to ensure rename is durable
+                try:
+                    dir_fd = os.open(str(self.file_path.parent), os.O_DIRECTORY)
+                    try:
+                        os.fsync(dir_fd)
+                    finally:
+                        os.close(dir_fd)
+                except OSError:
+                    pass
+            except Exception:
+                # Cleanup temp on failure
+                try:
+                    if tmp_path and tmp_path.exists():
+                        tmp_path.unlink()
+                except OSError:
+                    pass
+                raise
+        except OSError:
+            # Fallback to direct write if atomic path fails (e.g., permission)
+            with self.file_path.open("w", encoding="utf-8") as handle:
+                json.dump(self.settings, handle, indent=2, ensure_ascii=False)
 
     def get(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Get a setting value."""
