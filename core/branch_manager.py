@@ -21,20 +21,43 @@ class BranchManager:
             GitOperations.run_git(["checkout", "local_commit"], cwd=repo)
             return "local_commit"
 
-        start_ref = base_branch
-        if not GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{start_ref}"], cwd=repo):
-            start_ref = current_branch or start_ref
+        # Guard empty strings to avoid malformed refs like refs/heads/
+        start_ref: str | None = base_branch if base_branch else None
+        if start_ref:
+            if not GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{start_ref}"], cwd=repo):
+                start_ref = current_branch if current_branch else None
+        else:
+            start_ref = current_branch if current_branch else None
 
         if start_ref and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{start_ref}"], cwd=repo):
             GitOperations.run_git(["checkout", "-b", "local_commit", start_ref], cwd=repo)
             return "local_commit"
 
-        if GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/remotes/origin/{base_branch}"], cwd=repo):
+        if base_branch and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/remotes/origin/{base_branch}"], cwd=repo):
             GitOperations.run_git(["checkout", "-b", "local_commit", f"origin/{base_branch}"], cwd=repo)
             return "local_commit"
 
-        GitOperations.run_git(["checkout", "-b", "local_commit"], cwd=repo)
-        return "local_commit"
+        # Try origin/HEAD as additional fallback before creating from HEAD
+        if GitOperations.git_ok(["show-ref", "--verify", "--quiet", "refs/remotes/origin/HEAD"], cwd=repo):
+            try:
+                remote_head = GitOperations.run_git(["rev-parse", "--abbrev-ref", "origin/HEAD"], cwd=repo).strip()
+                if remote_head and remote_head != "HEAD" and GitOperations.git_ok(
+                    ["show-ref", "--verify", "--quiet", f"refs/remotes/{remote_head}"], cwd=repo
+                ):
+                    GitOperations.run_git(["checkout", "-b", "local_commit", remote_head], cwd=repo)
+                    return "local_commit"
+            except GitManagerError:
+                pass
+
+        if current_branch and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{current_branch}"], cwd=repo):
+            GitOperations.run_git(["checkout", "-b", "local_commit", current_branch], cwd=repo)
+            return "local_commit"
+
+        if GitOperations.git_ok(["rev-parse", "--verify", "--quiet", "HEAD"], cwd=repo):
+            GitOperations.run_git(["checkout", "-b", "local_commit"], cwd=repo)
+            return "local_commit"
+
+        raise GitManagerError("Cannot create local_commit – no valid start point (base_branch empty and no local/remote branch)")
 
     @staticmethod
     def switch_to_base(repo: Path, base_branch: str) -> str:

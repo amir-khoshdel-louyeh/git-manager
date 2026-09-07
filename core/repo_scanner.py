@@ -74,6 +74,39 @@ def _current_branch(repo: Path) -> str:
 def _pending_count(repo: Path, base_branch: str, current_branch: str) -> int:
     """Count commits ahead of base branch or remote on the current branch."""
     if not base_branch:
+        # Fallback when base cannot be detected – show total commits on the
+        # current branch instead of hiding them as 0. Prefer origin/HEAD diff.
+        if current_branch == "local_commit":
+            if not GitOperations.git_ok(["rev-parse", "--verify", "--quiet", "local_commit"], cwd=repo):
+                return 0
+            if GitOperations.git_ok(["show-ref", "--verify", "--quiet", "refs/remotes/origin/HEAD"], cwd=repo):
+                try:
+                    remote_head = GitOperations.run_git(["rev-parse", "--abbrev-ref", "origin/HEAD"], cwd=repo).strip()
+                    if remote_head and remote_head != "HEAD" and GitOperations.git_ok(
+                        ["show-ref", "--verify", "--quiet", f"refs/remotes/{remote_head}"], cwd=repo
+                    ):
+                        out = GitOperations.run_git(["rev-list", "--count", f"{remote_head}..local_commit"], cwd=repo)
+                        return int(out.strip() or "0")
+                except GitManagerError:
+                    pass
+            out = GitOperations.run_git(["rev-list", "--count", "local_commit"], cwd=repo)
+            return int(out.strip() or "0")
+        if current_branch and current_branch not in {"HEAD"} and GitOperations.git_ok(
+            ["show-ref", "--verify", "--quiet", f"refs/heads/{current_branch}"], cwd=repo
+        ):
+            # Try origin/HEAD as pseudo-base before falling back to total count
+            if GitOperations.git_ok(["show-ref", "--verify", "--quiet", "refs/remotes/origin/HEAD"], cwd=repo):
+                try:
+                    remote_head = GitOperations.run_git(["rev-parse", "--abbrev-ref", "origin/HEAD"], cwd=repo).strip()
+                    if remote_head and remote_head != "HEAD" and GitOperations.git_ok(
+                        ["show-ref", "--verify", "--quiet", f"refs/remotes/{remote_head}"], cwd=repo
+                    ):
+                        out = GitOperations.run_git(["rev-list", "--count", f"{remote_head}..{current_branch}"], cwd=repo)
+                        return int(out.strip() or "0")
+                except GitManagerError:
+                    pass
+            out = GitOperations.run_git(["rev-list", "--count", current_branch], cwd=repo)
+            return int(out.strip() or "0")
         return 0
 
     # If we're on local_commit, show commits between base..local_commit
@@ -118,10 +151,6 @@ def _pushed_count(repo: Path, base_branch: str) -> int:
 
     if GitOperations.git_ok(["show-ref", "--verify", "--quiet", "refs/remotes/origin/HEAD"], cwd=repo):
         out = GitOperations.run_git(["rev-list", "--count", "origin/HEAD"], cwd=repo)
-        return int(out.strip() or "0")
-
-    if GitOperations.git_ok(["rev-parse", "--verify", "--quiet", "refs/remotes/origin"], cwd=repo):
-        out = GitOperations.run_git(["rev-list", "--count", "--remotes=origin"], cwd=repo)
         return int(out.strip() or "0")
 
     return 0

@@ -463,10 +463,15 @@ class GitManagerGUI:
 
     def append_output(self, text: str) -> None:
         self.output.configure(state="normal")
-        self.output.insert(tk.END, text + "\n")
+        # Avoid double newlines – callers historically pass text with trailing \n
+        if text.endswith("\n"):
+            to_insert = text
+        else:
+            to_insert = text + "\n"
+        self.output.insert(tk.END, to_insert)
         self.output.configure(state="disabled")
         self.output.see(tk.END)
-        self.root.update()  # Force GUI refresh to show updates in real-time
+        self.root.update_idletasks()  # avoid re-entrant event handling during operations
 
     def _schedule_auto_refresh(self) -> None:
         self._cancel_auto_refresh()
@@ -699,18 +704,48 @@ class GitManagerGUI:
         if not state:
             self._end_operation()
             return
+        stashed = False
         try:
             GitConfig.ensure_identity(state.path)
+            # Handle dirty working tree (including untracked) like move does – avoid raw checkout errors
+            if not WorkingTreeManager.is_clean(state.path):
+                if not messagebox.askyesno(
+                    "Uncommitted Changes",
+                    "Working tree not clean (including untracked files). Stash (incl. untracked) and continue switching?\n"
+                    "This will also abort any ongoing merge/cherry-pick/rebase first.",
+                    parent=self.root,
+                ):
+                    self.append_output("⏭ Switch cancelled – working tree is dirty. Commit or stash first.\n")
+                    return
+                self._abort_in_progress_ops(state.path)
+                WorkingTreeManager.stash(state.path, f"git-manager auto-stash before switch ({now_display()})")
+                stashed = True
             if state.current_branch == "local_commit":
+                if not state.base_branch:
+                    raise GitManagerError("Base branch not detected – cannot switch back from local_commit")
                 BranchManager.switch_to_base(state.path, state.base_branch)
                 new_branch = state.base_branch
             else:
-                BranchManager.switch_to_local_commit(state.path, state.base_branch)
+                # Pass current_branch so branch_manager can handle empty base_branch safely
+                BranchManager.switch_to_local_commit(state.path, state.base_branch, state.current_branch)
                 new_branch = "local_commit"
+            # Restore stashed changes after successful checkout, if any
+            if stashed:
+                try:
+                    WorkingTreeManager.pop_stash(state.path)
+                    self.append_output("🔧 Restored stashed changes after switch.\n")
+                except GitManagerError as exc:
+                    self.append_output(f"⚠️ Stash pop failed after switch: {str(exc)}\nResolve manually with 'git stash pop'\n")
             self.append_output(f"Switched to {new_branch} in {state.name}")
             self.refresh_repos()
             self.append_output("✅ Operation complete. The branch switch is done.\n")
         except GitManagerError as exc:
+            # If we stashed and checkout failed, try to restore stash
+            if stashed:
+                try:
+                    WorkingTreeManager.pop_stash(state.path)
+                except GitManagerError:
+                    self.append_output("⚠️ Stash remains – resolve manually with 'git stash pop'\n")
             self.append_output(f"\n❌ Error: {str(exc)}\n")
             messagebox.showerror("Operation Failed", "An error occurred. Check the output panel for details.")
         finally:
@@ -903,7 +938,17 @@ class GitManagerGUI:
                 GitOperations.run_git(["add", "-u"], cwd=repo)
             else:
                 self.append_output(f"   • Staging specified paths: {pathspec}\n")
-                GitOperations.run_git(["add", *pathspec.split()], cwd=repo)
+                import shlex
+
+                try:
+                    parts = shlex.split(pathspec, posix=True)
+                except ValueError as exc:
+                    raise GitManagerError(f"Invalid pathspec: {exc}") from exc
+                if not parts:
+                    raise GitManagerError("No valid pathspec provided")
+                # Validate no empty and no dangerous patterns are silently ignored;
+                # shlex already handles quoted spaces correctly.
+                GitOperations.run_git(["add", *parts], cwd=repo)
 
             if GitOperations.git_ok(["diff", "--cached", "--quiet"], cwd=repo):
                 messagebox.showinfo("Nothing staged", "No changes were staged for commit. Adjust the add scope and try again.")
