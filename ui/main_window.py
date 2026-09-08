@@ -15,7 +15,7 @@ from core.repo_scanner import RepoScanner
 from core.repo_state import RepoState
 from core.settings_db import SettingsDB
 from core.working_tree_manager import WorkingTreeManager
-from ui.dialogs import CommitDialog, NumericKeypadDialog, PreviewModeDialog, ResetDialog, SettingsDialog
+from ui.dialogs import CommitDialog, ManageCommitsDialog, NumericKeypadDialog, PreviewModeDialog, ResetDialog, SettingsDialog
 from ui.theme import apply_theme as apply_theme_style
 from utils.network import NO_INTERNET_MSG, has_internet_connection, is_network_error_message
 from utils.time_utils import now_display, now_iso
@@ -298,7 +298,7 @@ class GitManagerGUI:
         ttk.Button(buttons, text="👁 Preview Commits", command=self.action_preview, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
         ttk.Button(buttons, text="📝 Make a Commit", command=self.action_make_commit, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
         ttk.Button(buttons, text="🚀 Move Commits", command=self.action_move, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
-        ttk.Button(buttons, text="🔁 Reset", command=self.action_reset, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+        ttk.Button(buttons, text="🔁 Reset / Delete", command=self.action_reset, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
         ttk.Button(buttons, text="⚙️ Settings", command=self.action_settings, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
 
         # Split main content into resizable panes
@@ -886,6 +886,32 @@ class GitManagerGUI:
         finally:
             self._end_operation()
 
+    def _confirm_hard_reset(self, repo: Path, target_desc: str, reset_type: str) -> bool:
+        if reset_type != "hard":
+            return True
+        is_dirty = not WorkingTreeManager.is_clean(repo)
+        if is_dirty:
+            try:
+                status = GitOperations.run_git(["status", "--porcelain"], cwd=repo).strip()
+                preview = "\n".join(status.splitlines()[:10])
+                if len(status.splitlines()) > 10:
+                    preview += "\n..."
+            except GitManagerError:
+                preview = ""
+            detail = f"\n\nDirty files:\n{preview}" if preview else ""
+            return messagebox.askyesno(
+                "Confirm Hard Reset",
+                f"Hard reset will discard staged and unstaged tracked changes and move the branch to {target_desc}.\n"
+                f"Working tree is dirty (including untracked files shown below) – tracked changes will be PERMANENTLY LOST. "
+                f"Untracked files will remain on disk after reset.{detail}\n\nContinue?",
+                parent=self.root,
+            )
+        return messagebox.askyesno(
+            "Confirm Hard Reset",
+            f"Hard reset will discard uncommitted changes and move the branch to {target_desc}. Continue?",
+            parent=self.root,
+        )
+
     def action_reset(self) -> None:
         if not self._start_operation("reset the repository"):
             return
@@ -895,52 +921,171 @@ class GitManagerGUI:
             return
 
         try:
-            dialog = ResetDialog(self.root, state.name, self.theme_mode)
+            # Unified dialog: Reset + Delete (pushed & local_commit)
+            dialog = ManageCommitsDialog(
+                self.root,
+                state.path,
+                state.name,
+                state.base_branch,
+                state.current_branch,
+                state.local_exists,
+                state.commit_count,
+                self.theme_mode,
+            )
             self.root.wait_window(dialog)
             if dialog.result is None:
                 return
 
-            target, reset_type = dialog.result
-            if reset_type == "hard":
-                # Extra safety: check actual dirty state including untracked files.
-                # is_clean now uses `status --porcelain` so untracked is visible.
-                is_dirty = not WorkingTreeManager.is_clean(state.path)
-                if is_dirty:
-                    try:
-                        status = GitOperations.run_git(["status", "--porcelain"], cwd=state.path).strip()
-                        preview = "\n".join(status.splitlines()[:10])
-                        if len(status.splitlines()) > 10:
-                            preview += "\n..."
-                    except GitManagerError:
-                        preview = ""
-                    detail = f"\n\nDirty files:\n{preview}" if preview else ""
-                    if not messagebox.askyesno(
-                        "Confirm Hard Reset",
-                        f"Hard reset will discard staged and unstaged tracked changes and move the branch to {target}.\n"
-                        f"Working tree is dirty (including untracked files shown below) – tracked changes will be PERMANENTLY LOST. "
-                        f"Untracked files will remain on disk after reset.{detail}\n\nContinue?",
-                        parent=self.root,
-                    ):
-                        return
-                else:
-                    if not messagebox.askyesno(
-                        "Confirm Hard Reset",
-                        f"Hard reset will discard uncommitted changes and move the branch to {target}. Continue?",
-                        parent=self.root,
-                    ):
-                        return
+            res = dialog.result
+            repo = state.path
 
-            self.append_output(f"🔁 Resetting {state.name} to {target} with --{reset_type}...\n")
-            GitOperations.run_git(["reset", f"--{reset_type}", target], cwd=state.path)
-            self.append_output(f"✅ Reset {state.name} to {target} with --{reset_type}\n")
-            self.refresh_repos()
-            self.append_output("✅ Reset complete. The repository is now on the target branch.\n")
+            # --- Common mode: classic reset to target ---
+            if res.get("mode") == "reset":
+                target = res["target"]
+                reset_type = res["type"]
+                if not self._confirm_hard_reset(repo, target, reset_type):
+                    return
+                self.append_output(f"🔁 Resetting {state.name} to {target} with --{reset_type}...\n")
+                GitOperations.run_git(["reset", f"--{reset_type}", target], cwd=repo)
+                self.append_output(f"✅ Reset {state.name} to {target} with --{reset_type}\n")
+                self.refresh_repos()
+                self.append_output("✅ Reset complete. The repository is now on the target branch.\n")
+                return
+
+            # --- Delete mode: delete last N commits from branch ---
+            branch = res["branch"]
+            count = int(res["count"])
+            reset_type = res.get("type", "hard")
+            force_push = bool(res.get("force_push"))
+
+            # Verify internet if force push needed
+            if force_push and not has_internet_connection(timeout=3):
+                self._show_no_internet_error(GitManagerError(f"{NO_INTERNET_MSG} — force push needs internet"))
+                return
+
+            # Determine if branch is pushed (has remote) for warning
+            is_pushed_branch = branch == state.base_branch
+            is_local = branch == "local_commit"
+
+            # Preview commits to be deleted for final confirmation
+            try:
+                preview_log = GitOperations.run_git(
+                    ["log", f"{branch}", f"-n{count}", "--oneline", "--date=short", "--pretty=format:%h %ad %s"],
+                    cwd=repo,
+                )
+                preview = preview_log.strip() if preview_log.strip() else "(no log)"
+            except GitManagerError:
+                preview = "(unable to preview)"
+
+            confirm_msg = (
+                f"Delete {count} last commit(s) from '{branch}' in {state.name} with --{reset_type}?\n\n"
+                f"Commits to be removed:\n{preview}\n\n"
+                f"{'⚠️ These commits are already pushed to origin — a force push will be required!' if is_pushed_branch and force_push else ''}\n"
+                f"{'⚠️ This will also affect remote if force pushed.' if is_pushed_branch else ''}\n"
+                f"Continue?"
+            )
+            if not messagebox.askyesno("Confirm Delete Commits", confirm_msg, parent=self.root):
+                return
+
+            if not self._confirm_hard_reset(repo, f"{branch}~{count}", reset_type):
+                return
+
+            # Handle dirty worktree: stash if needed (similar to switch)
+            stashed = False
+            try:
+                if not WorkingTreeManager.is_clean(repo):
+                    if not messagebox.askyesno(
+                        "Uncommitted Changes",
+                        "Working tree not clean. Stash (incl. untracked) and continue delete?\n"
+                        "This will also abort any ongoing merge/cherry-pick/rebase first.",
+                        parent=self.root,
+                    ):
+                        self.append_output("⏭ Delete cancelled – working tree is dirty.\n")
+                        return
+                    self._abort_in_progress_ops(repo)
+                    WorkingTreeManager.stash(repo, f"git-manager auto-stash before delete ({now_display()})")
+                    stashed = True
+
+                # Ensure we are on target branch before reset
+                current = GitOperations.run_git(["branch", "--show-current"], cwd=repo).strip() or "HEAD"
+                if current != branch:
+                    # If branch does not exist locally, try to create from origin or fail
+                    if not GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{branch}"], cwd=repo):
+                        if branch == state.base_branch and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/remotes/origin/{branch}"], cwd=repo):
+                            GitOperations.run_git(["checkout", "-b", branch, f"origin/{branch}"], cwd=repo)
+                        else:
+                            raise GitManagerError(f"Branch '{branch}' not found locally")
+                    else:
+                        BranchManager.checkout(repo, branch)
+
+                # Create backup
+                backup_name = f"backup_{branch}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                try:
+                    GitOperations.run_git(["branch", backup_name, branch], cwd=repo)
+                    self.append_output(f"🛟 Created backup {backup_name} from {branch} before delete\n")
+                except GitManagerError as exc:
+                    self.append_output(f"⚠️ Failed to create backup: {str(exc)}\n")
+
+                # Determine target ref
+                target_ref: str
+                if is_local and state.base_branch:
+                    # If deleting all pending, reset to base_branch directly
+                    try:
+                        pending_now = int(
+                            GitOperations.run_git(["rev-list", "--count", f"{state.base_branch}..{branch}"], cwd=repo).strip() or "0"
+                        )
+                    except GitManagerError:
+                        pending_now = count
+                    if count >= pending_now:
+                        target_ref = state.base_branch
+                    else:
+                        target_ref = f"HEAD~{count}"
+                else:
+                    target_ref = f"HEAD~{count}"
+
+                self.append_output(f"🔁 Deleting {count} commit(s) from {branch} -> resetting to {target_ref} with --{reset_type}...\n")
+                GitOperations.run_git(["reset", f"--{reset_type}", target_ref], cwd=repo)
+                self.append_output(f"✅ Deleted {count} commit(s) from {branch}\n")
+
+                if is_pushed_branch and force_push:
+                    if not has_internet_connection(timeout=3):
+                        self.append_output("⚠️ Internet offline — local delete done but remote not updated. Push manually later.\n")
+                    else:
+                        self.append_output(f"🚀 Force pushing {branch} to origin (with lease)...\n")
+                        try:
+                            GitOperations.run_git(["push", "--force-with-lease", "origin", f"{branch}:{branch}"], cwd=repo)
+                            self.append_output(f"✅ Force pushed {branch} to origin\n")
+                        except GitManagerError as exc:
+                            if self._is_no_internet_error(exc):
+                                self.append_output(f"⚠️ Force push failed due to internet: {str(exc)}\n")
+                                self._show_no_internet_error(exc)
+                            else:
+                                raise
+
+                if stashed:
+                    try:
+                        WorkingTreeManager.pop_stash(repo)
+                        self.append_output("🔧 Restored stashed changes.\n")
+                    except GitManagerError as exc:
+                        self.append_output(f"⚠️ Stash pop failed: {str(exc)}\nResolve manually with 'git stash pop'\n")
+
+                self.refresh_repos()
+                self.append_output("✅ Delete complete. You may continue.\n")
+
+            except GitManagerError:
+                if stashed:
+                    try:
+                        WorkingTreeManager.pop_stash(repo)
+                    except GitManagerError:
+                        self.append_output("⚠️ Stash remains – resolve manually with 'git stash pop'\n")
+                raise
+
         except GitManagerError as exc:
             self.append_output(f"\n❌ Error: {str(exc)}\n")
             if self._is_no_internet_error(exc):
                 self._show_no_internet_error(exc)
             else:
-                messagebox.showerror("Reset Failed", "An error occurred during reset. Check the output panel for details.")
+                messagebox.showerror("Operation Failed", "An error occurred. Check the output panel for details.")
         finally:
             self._end_operation()
 
