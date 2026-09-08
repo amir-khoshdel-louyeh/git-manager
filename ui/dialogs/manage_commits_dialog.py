@@ -55,10 +55,14 @@ class ManageCommitsDialog(tk.Toplevel):
         self.result: Optional[dict] = None
 
         self.title(f"Manage commits — {repo_name}")
-        self.geometry("780x720")
-        self.minsize(680, 580)
+        self.geometry("920x820")
+        self.minsize(880, 680)
         self.transient(parent)
         self.grab_set()
+        try:
+            self.resizable(True, True)
+        except tk.TclError:
+            pass
 
         dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
         self.configure(bg=dialog_bg)
@@ -101,7 +105,7 @@ class ManageCommitsDialog(tk.Toplevel):
             ttk.Radiobutton(types_frame, text=t.capitalize(), variable=self.reset_type, value=t, style="Dialog.TRadiobutton").pack(side=tk.LEFT, padx=6)
         # Quick recent log preview for reset target help
         ttk.Label(self.reset_frame, text="Recent commits on current branch:", font=("Helvetica", 9), style="Dialog.TLabel").pack(anchor=tk.W, pady=(12, 4))
-        self.recent_text = scrolledtext.ScrolledText(self.reset_frame, height=6, font=("Courier", 9), wrap=tk.NONE)
+        self.recent_text = scrolledtext.ScrolledText(self.reset_frame, height=12, font=("Courier", 9), wrap=tk.NONE)
         self.recent_text.pack(fill=tk.BOTH, expand=True, pady=(0, 4))
         self.recent_text.configure(state="disabled")
         self._load_recent()
@@ -147,7 +151,7 @@ class ManageCommitsDialog(tk.Toplevel):
 
         # Preview area
         ttk.Label(self.delete_frame, text="Preview (will be deleted):", font=("Helvetica", 9, "bold"), style="Dialog.TLabel").pack(anchor=tk.W, pady=(8, 4))
-        self.delete_preview = scrolledtext.ScrolledText(self.delete_frame, height=8, font=("Courier", 9), wrap=tk.NONE)
+        self.delete_preview = scrolledtext.ScrolledText(self.delete_frame, height=14, font=("Courier", 9), wrap=tk.NONE)
         self.delete_preview.pack(fill=tk.BOTH, expand=True)
         self.delete_preview.configure(state="disabled")
         self._update_delete_preview()
