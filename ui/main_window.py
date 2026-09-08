@@ -107,9 +107,7 @@ class GitManagerGUI:
 
     def _check_internet_or_notify(self) -> bool:
         """Return True if online, else show error and return False."""
-        if not has_internet_connection(timeout=3.0):
-            self._show_no_internet_error()
-            return False
+        # Proactive check removed - rely on git error handling
         return True
 
     def apply_theme(self, mode: str) -> None:
@@ -958,11 +956,6 @@ class GitManagerGUI:
             reset_type = res.get("type", "hard")
             force_push = bool(res.get("force_push"))
 
-            # Verify internet if force push needed
-            if force_push and not has_internet_connection(timeout=3):
-                self._show_no_internet_error(GitManagerError(f"{NO_INTERNET_MSG} — force push needs internet"))
-                return
-
             # Determine if branch is pushed (has remote) for warning
             is_pushed_branch = branch == state.base_branch
             is_local = branch == "local_commit"
@@ -1048,19 +1041,16 @@ class GitManagerGUI:
                 self.append_output(f"✅ Deleted {count} commit(s) from {branch}\n")
 
                 if is_pushed_branch and force_push:
-                    if not has_internet_connection(timeout=3):
-                        self.append_output("⚠️ Internet offline — local delete done but remote not updated. Push manually later.\n")
-                    else:
-                        self.append_output(f"🚀 Force pushing {branch} to origin (with lease)...\n")
-                        try:
-                            GitOperations.run_git(["push", "--force-with-lease", "origin", f"{branch}:{branch}"], cwd=repo)
-                            self.append_output(f"✅ Force pushed {branch} to origin\n")
-                        except GitManagerError as exc:
-                            if self._is_no_internet_error(exc):
-                                self.append_output(f"⚠️ Force push failed due to internet: {str(exc)}\n")
-                                self._show_no_internet_error(exc)
-                            else:
-                                raise
+                    self.append_output(f"🚀 Force pushing {branch} to origin (with lease)...\n")
+                    try:
+                        GitOperations.run_git(["push", "--force-with-lease", "origin", f"{branch}:{branch}"], cwd=repo)
+                        self.append_output(f"✅ Force pushed {branch} to origin\n")
+                    except GitManagerError as exc:
+                        if self._is_no_internet_error(exc):
+                            self.append_output(f"⚠️ Force push failed due to internet: {str(exc)}\n")
+                            self._show_no_internet_error(exc)
+                        else:
+                            raise
 
                 if stashed:
                     try:
@@ -1284,10 +1274,8 @@ class GitManagerGUI:
                     self.append_output("⏭ Move cancelled — future date not confirmed.\n")
                     return
 
-            # Network check and fetch only after window was shown
+            # Fetch after window was shown - rely on git error handling, no proactive check
             if GitOperations.git_ok(["remote", "get-url", "origin"], cwd=repo):
-                if not has_internet_connection(timeout=3.0):
-                    raise GitManagerError(f"{NO_INTERNET_MSG} — fetch stopped because there is no internet connection. Please check your connection.")
                 try:
                     self.append_output("🔄 Fetching origin before move...\n")
                     GitOperations.run_git(["fetch", "--prune", "origin"], cwd=repo)
@@ -1486,8 +1474,6 @@ class GitManagerGUI:
                 raise GitManagerError(f"Found commit(s) with author name not matching '{expected_name}'")
 
             self.append_output(f"✅ All {processed_count} commits have correct author info (will be attributed to {expected_name} <{expected_email}>)\n")
-            if not has_internet_connection(timeout=3.0):
-                raise GitManagerError(f"{NO_INTERNET_MSG} — push stopped because there is no internet connection. Please check your connection.")
             self.append_output(f"🚀 Pushing to origin {base_branch}...\n")
             try:
                 GitOperations.run_git(["push", "origin", f"{temp_branch}:{base_branch}"], cwd=repo)

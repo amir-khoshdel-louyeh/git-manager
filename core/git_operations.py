@@ -22,12 +22,8 @@ def _requires_internet(args: Sequence[str]) -> bool:
 
 
 def _check_internet_before_network_command(args: Sequence[str]) -> None:
-    if _requires_internet(args):
-        # Local import to avoid circular dependency
-        from utils.network import NO_INTERNET_MSG, has_internet_connection
-
-        if not has_internet_connection(timeout=3.0):
-            raise GitManagerError(f"{NO_INTERNET_MSG} — Please check your internet connection.")
+    # Proactive socket check removed per user request - only check git error after command fails
+    return
 
 
 def _maybe_translate_network_error(stderr: str) -> str:
