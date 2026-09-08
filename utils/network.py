@@ -26,31 +26,52 @@ _NETWORK_ERROR_KEYWORDS = (
 )
 
 
-def has_internet_connection(timeout: float = 3.0) -> bool:
+_internet_cache: dict[str, float | bool] = {"result": False, "time": 0.0}
+_CACHE_TTL = 5.0  # seconds
+
+
+def has_internet_connection(timeout: float = 1.0) -> bool:
     """Return True if internet appears reachable.
 
     Tries a TCP connection to well-known public DNS servers first
     (no DNS required), then falls back to a DNS-based host.
     Uses stdlib only, no external dependencies.
+    Cached for a few seconds to avoid repeated blocking.
     """
-    # 1) Direct IP reachability (does not need DNS)
-    for host, port in (("8.8.8.8", 53), ("1.1.1.1", 53), ("8.8.8.8", 80), ("1.1.1.1", 80)):
+    import time
+
+    now = time.monotonic()
+    # Use cache for fast repeated checks (e.g., opening dialogs)
+    try:
+        if now - float(_internet_cache.get("time", 0)) < _CACHE_TTL:
+            return bool(_internet_cache.get("result"))
+    except Exception:
+        pass
+
+    # Fast path: try single primary host with short timeout
+    for host, port in (("8.8.8.8", 53), ("1.1.1.1", 53)):
         try:
             sock = socket.create_connection((host, port), timeout=timeout)
             sock.close()
+            _internet_cache["result"] = True
+            _internet_cache["time"] = now
             return True
         except OSError:
             continue
 
-    # 2) DNS-based check as final fallback
-    for host, port in (("www.google.com", 80), ("www.cloudflare.com", 80)):
+    # Fallback: try DNS host with slightly longer timeout but still short
+    for host, port in (("8.8.8.8", 80), ("www.google.com", 80)):
         try:
             sock = socket.create_connection((host, port), timeout=timeout)
             sock.close()
+            _internet_cache["result"] = True
+            _internet_cache["time"] = now
             return True
         except OSError:
             continue
 
+    _internet_cache["result"] = False
+    _internet_cache["time"] = now
     return False
 
 

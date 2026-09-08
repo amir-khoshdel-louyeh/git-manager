@@ -108,7 +108,10 @@ class ManageCommitsDialog(tk.Toplevel):
         self.recent_text = scrolledtext.ScrolledText(self.reset_frame, height=12, font=("Courier", 9), wrap=tk.NONE)
         self.recent_text.pack(fill=tk.BOTH, expand=True, pady=(0, 4))
         self.recent_text.configure(state="disabled")
-        self._load_recent()
+        self.recent_text.configure(state="normal")
+        self.recent_text.insert(tk.END, "Loading...")
+        self.recent_text.configure(state="disabled")
+        self.after(10, self._load_recent_async)
 
         # --- Delete mode frame ---
         self.delete_frame = ttk.Frame(self.container, style="Dialog.TFrame")
@@ -129,11 +132,11 @@ class ManageCommitsDialog(tk.Toplevel):
         self.delete_branch_var = tk.StringVar(value=branches[0])
         self.branch_combo = ttk.Combobox(branch_row, textvariable=self.delete_branch_var, values=branches, width=22, state="readonly")
         self.branch_combo.pack(side=tk.LEFT, padx=(8, 12))
-        self.branch_combo.bind("<<ComboboxSelected>>", lambda e: self._update_delete_preview())
+        self.branch_combo.bind("<<ComboboxSelected>>", lambda e: self._update_delete_preview_async())
         # Count
         ttk.Label(branch_row, text="Count:", style="Dialog.TLabel").pack(side=tk.LEFT)
         self.delete_count_var = tk.StringVar(value="1")
-        self.count_spin = ttk.Spinbox(branch_row, from_=1, to=20, textvariable=self.delete_count_var, width=5, command=self._update_delete_preview)
+        self.count_spin = ttk.Spinbox(branch_row, from_=1, to=20, textvariable=self.delete_count_var, width=5, command=self._update_delete_preview_async)
         self.count_spin.pack(side=tk.LEFT, padx=(8, 0))
         self.delete_count_var.trace_add("write", lambda *_: self._on_count_change())
 
@@ -154,7 +157,10 @@ class ManageCommitsDialog(tk.Toplevel):
         self.delete_preview = scrolledtext.ScrolledText(self.delete_frame, height=14, font=("Courier", 9), wrap=tk.NONE)
         self.delete_preview.pack(fill=tk.BOTH, expand=True)
         self.delete_preview.configure(state="disabled")
-        self._update_delete_preview()
+        self.delete_preview.configure(state="normal")
+        self.delete_preview.insert(tk.END, "Loading preview...")
+        self.delete_preview.configure(state="disabled")
+        self.after(10, self._update_delete_preview_async)
 
         # Show initial mode
         self._on_mode_change()
@@ -183,6 +189,27 @@ class ManageCommitsDialog(tk.Toplevel):
             self.recent_text.insert(tk.END, "(no commits)")
         self.recent_text.configure(state="disabled")
 
+    def _load_recent_async(self) -> None:
+        import threading
+
+        def _work() -> None:
+            lines = _get_commit_log(self.repo_path, "HEAD", limit=10)
+            self.after(0, lambda: self._apply_recent(lines))
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _apply_recent(self, lines: list[str]) -> None:
+        try:
+            self.recent_text.configure(state="normal")
+            self.recent_text.delete("1.0", tk.END)
+            if lines:
+                self.recent_text.insert(tk.END, "\n".join(lines))
+            else:
+                self.recent_text.insert(tk.END, "(no commits)")
+            self.recent_text.configure(state="disabled")
+        except tk.TclError:
+            pass
+
     def _on_mode_change(self) -> None:
         for w in self.container.winfo_children():
             w.pack_forget()
@@ -193,7 +220,7 @@ class ManageCommitsDialog(tk.Toplevel):
 
     def _on_count_change(self) -> None:
         # Debounce preview
-        self.after(300, self._update_delete_preview)
+        self.after(300, self._update_delete_preview_async)
 
     def _update_delete_preview(self) -> None:
         branch = self.delete_branch_var.get().strip() or self.current_branch
@@ -224,6 +251,42 @@ class ManageCommitsDialog(tk.Toplevel):
             # local_commit deletion does not need push
             if branch == "local_commit":
                 self.force_push_var.set(False)
+
+    def _update_delete_preview_async(self) -> None:
+        branch = self.delete_branch_var.get().strip() or self.current_branch
+        try:
+            count = max(1, min(50, int(self.delete_count_var.get().strip() or "1")))
+        except ValueError:
+            count = 1
+        import threading
+
+        def _work() -> None:
+            lines = _get_commit_log(self.repo_path, branch, limit=count)
+            self.after(0, lambda: self._apply_delete_preview(branch, count, lines))
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _apply_delete_preview(self, branch: str, count: int, lines: list[str]) -> None:
+        try:
+            self.delete_preview.configure(state="normal")
+            self.delete_preview.delete("1.0", tk.END)
+            if lines:
+                preview_lines = lines[:count]
+                self.delete_preview.insert(tk.END, f"Will delete {len(preview_lines)} commit(s) from {branch}:\n")
+                self.delete_preview.insert(tk.END, "—" * 60 + "\n")
+                for l in preview_lines:
+                    self.delete_preview.insert(tk.END, l + "\n")
+                if len(lines) < count:
+                    self.delete_preview.insert(tk.END, f"\n⚠️ Only {len(lines)} commits available on {branch}\n")
+            else:
+                self.delete_preview.insert(tk.END, f"(no commits on {branch})")
+            self.delete_preview.configure(state="disabled")
+            if branch == self.base_branch:
+                self.force_push_var.set(True)
+            elif branch == "local_commit":
+                self.force_push_var.set(False)
+        except tk.TclError:
+            pass
 
     def _on_preview(self) -> None:
         if self.mode_var.get() == "reset":
