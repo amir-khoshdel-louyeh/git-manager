@@ -120,7 +120,7 @@ class CommitDialog(tk.Toplevel):
             if is_future(custom_iso):
                 if not messagebox.askyesno(
                     "Future commit warning",
-                    f"هشدار: این کامیت برای آینده است!\n\nتاریخ انتخابی: {custom_iso}\nزمان فعلی: {now_date_str()} {now_time_str()}\n\nآیا می‌خواهید با این تاریخ آینده کامیت انجام شود؟",
+                    f"Warning: This commit is for the future!\n\nSelected date: {custom_iso}\nCurrent time: {now_date_str()} {now_time_str()}\n\nDo you want to create the commit with this future date?",
                     parent=self,
                 ):
                     return

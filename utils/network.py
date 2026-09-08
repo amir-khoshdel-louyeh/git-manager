@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import socket
 
-# Standard Persian message as requested by user
-NO_INTERNET_MSG = "اینترنت کانکشن نداری"
-NO_INTERNET_DETAIL = "اینترنت کانکشن نداری! لطفاً اتصال اینترنت خود را بررسی کن."
+NO_INTERNET_MSG = "No internet connection"
+NO_INTERNET_DETAIL = "No internet connection! Please check your internet connection."
 
 # Keywords that typically indicate a network / DNS failure in git stderr
 _NETWORK_ERROR_KEYWORDS = (
@@ -62,7 +61,7 @@ def is_network_error_message(message: str) -> bool:
 
 
 def ensure_internet_or_raise(timeout: float = 3.0) -> None:
-    """Raise GitManagerError with Persian message if offline."""
+    """Raise GitManagerError with message if offline."""
     # Local import to avoid circular dependency at module load time
     from core.git_operations import GitManagerError  # noqa: WPS433
 

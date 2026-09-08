@@ -363,7 +363,7 @@ class NumericKeypadDialog(tk.Toplevel):
                 if is_future(custom_iso):
                     if not messagebox.askyesno(
                         "Future commit warning",
-                        f"هشدار: این کامیت برای آینده است!\n\nتاریخ انتخابی: {custom_iso}\nآیا می‌خواهید ادامه دهید؟",
+                        f"Warning: This commit is for the future!\n\nSelected date: {custom_iso}\nDo you want to continue?",
                         parent=self,
                     ):
                         return
@@ -375,7 +375,7 @@ class NumericKeypadDialog(tk.Toplevel):
                     # Still warn for current mode if somehow future
                     if not messagebox.askyesno(
                         "Future commit warning",
-                        f"هشدار: زمان فعلی سیستم در آینده است ({cur_iso}). آیا می‌خواهید کامیت با این زمان ثبت شود؟",
+                        f"Warning: System current time is in the future ({cur_iso}). Do you want to create the commit with this time?",
                         parent=self,
                     ):
                         return

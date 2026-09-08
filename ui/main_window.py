@@ -95,15 +95,15 @@ class GitManagerGUI:
 
     def _show_no_internet_error(self, exc: Exception | None = None) -> None:
         detail = str(exc) if exc else ""
-        # Always show the requested Persian message prominently
+        # Always show the no internet message prominently
         messagebox.showerror(
-            "عدم اتصال به اینترنت",
-            f"{NO_INTERNET_MSG}!\nلطفاً اتصال اینترنت خود را بررسی کنید.\n{detail}",
+            "No internet connection",
+            f"{NO_INTERNET_MSG}!\nPlease check your internet connection.\n{detail}",
             parent=self.root,
         )
-        self.append_output(f"\n❌ {NO_INTERNET_MSG}! لطفاً اتصال اینترنت را بررسی کنید.\n")
+        self.append_output(f"\n❌ {NO_INTERNET_MSG}! Please check your internet connection.\n")
         if detail:
-            self.append_output(f"   جزئیات: {detail}\n")
+            self.append_output(f"   Details: {detail}\n")
 
     def _check_internet_or_notify(self) -> bool:
         """Return True if online, else show error and return False."""
@@ -1128,7 +1128,7 @@ class GitManagerGUI:
             if is_future(iso_value):
                 if not messagebox.askyesno(
                     "Future commit warning",
-                    f"هشدار: این کامیت برای آینده است!\n\nتاریخ: {iso_value}\nزمان فعلی: {now_display()}\n\nآیا می‌خواهید کامیت انجام شود؟",
+                    f"Warning: This commit is for the future!\n\nDate: {iso_value}\nCurrent time: {now_display()}\n\nDo you want to create the commit?",
                     parent=self.root,
                 ):
                     self.append_output("⏭ Commit cancelled — future date not confirmed.\n")
@@ -1209,15 +1209,15 @@ class GitManagerGUI:
                 raise GitManagerError("local_commit does not exist")
 
             if GitOperations.git_ok(["remote", "get-url", "origin"], cwd=repo):
-                # Proactive internet check with Persian error before touching network
+                # Proactive internet check with English error before touching network
                 if not has_internet_connection(timeout=3.0):
-                    raise GitManagerError(f"{NO_INTERNET_MSG} — fetch متوقف شد چون اینترنت وصل نیست. لطفاً اتصال اینترنت را بررسی کنید.")
+                    raise GitManagerError(f"{NO_INTERNET_MSG} — fetch stopped because there is no internet connection. Please check your connection.")
                 try:
                     self.append_output("🔄 Fetching origin before move...\n")
                     GitOperations.run_git(["fetch", "--prune", "origin"], cwd=repo)
                 except GitManagerError as exc:
                     if self._is_no_internet_error(exc):
-                        raise GitManagerError(f"{NO_INTERNET_MSG} — fetch ناموفق بود: {str(exc)}") from exc
+                        raise GitManagerError(f"{NO_INTERNET_MSG} — fetch failed: {str(exc)}") from exc
                     raise GitManagerError(
                         f"Failed to fetch origin before move. Remote is unavailable or access is denied: {str(exc)}"
                     ) from exc
@@ -1316,7 +1316,7 @@ class GitManagerGUI:
             if is_future(iso_value):
                 if not messagebox.askyesno(
                     "Future commit warning",
-                    f"هشدار: این کامیت برای آینده است!\n\nتاریخ انتخابی: {iso_value}\nزمان فعلی: {now_display()}\n\nآیا می‌خواهید ادامه دهید؟",
+                    f"Warning: This commit is for the future!\n\nSelected date: {iso_value}\nCurrent time: {now_display()}\n\nDo you want to continue?",
                     parent=self.root,
                 ):
                     self.append_output("⏭ Move cancelled — future date not confirmed.\n")
@@ -1464,13 +1464,13 @@ class GitManagerGUI:
 
             self.append_output(f"✅ All {processed_count} commits have correct author info (will be attributed to {expected_name} <{expected_email}>)\n")
             if not has_internet_connection(timeout=3.0):
-                raise GitManagerError(f"{NO_INTERNET_MSG} — push متوقف شد چون اینترنت وصل نیست. لطفاً اتصال اینترنت را بررسی کنید.")
+                raise GitManagerError(f"{NO_INTERNET_MSG} — push stopped because there is no internet connection. Please check your connection.")
             self.append_output(f"🚀 Pushing to origin {base_branch}...\n")
             try:
                 GitOperations.run_git(["push", "origin", f"{temp_branch}:{base_branch}"], cwd=repo)
             except GitManagerError as exc:
                 if self._is_no_internet_error(exc):
-                    raise GitManagerError(f"{NO_INTERNET_MSG} — push ناموفق بود: {str(exc)}") from exc
+                    raise GitManagerError(f"{NO_INTERNET_MSG} — push failed: {str(exc)}") from exc
                 raise
             self.append_output(f"✅ Done! {processed_count} commits moved with date/time {now_iso_value}\n")
 

@@ -27,11 +27,11 @@ def _check_internet_before_network_command(args: Sequence[str]) -> None:
         from utils.network import NO_INTERNET_MSG, has_internet_connection
 
         if not has_internet_connection(timeout=3.0):
-            raise GitManagerError(f"{NO_INTERNET_MSG} — اتصال اینترنت برقرار نیست. لطفاً اتصال خود را بررسی کنید.")
+            raise GitManagerError(f"{NO_INTERNET_MSG} — Please check your internet connection.")
 
 
 def _maybe_translate_network_error(stderr: str) -> str:
-    """If stderr looks like a network failure, prepend Persian message."""
+    """If stderr looks like a network failure, prepend message."""
     from utils.network import NO_INTERNET_MSG, is_network_error_message
 
     if is_network_error_message(stderr):
