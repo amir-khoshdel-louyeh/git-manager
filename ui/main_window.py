@@ -18,7 +18,7 @@ from core.working_tree_manager import WorkingTreeManager
 from ui.dialogs import CommitDialog, ManageCommitsDialog, NumericKeypadDialog, PreviewModeDialog, ResetDialog, SettingsDialog
 from ui.theme import apply_theme as apply_theme_style
 from utils.network import NO_INTERNET_MSG, has_internet_connection, is_network_error_message
-from utils.time_utils import now_display, now_iso
+from utils.time_utils import is_future, now_display, now_iso
 
 
 DEFAULT_BASE_DIR = Path.home() / "GitHub"
@@ -1110,7 +1110,30 @@ class GitManagerGUI:
             if dialog.result is None:
                 return
 
-            message, add_mode, pathspec = dialog.result
+            # Support both old (3-tuple) and new (5-tuple) result for backward compat
+            if len(dialog.result) == 5:
+                message, add_mode, pathspec, date_mode, custom_iso = dialog.result
+            else:
+                message, add_mode, pathspec = dialog.result  # type: ignore
+                date_mode, custom_iso = "current", None
+            # Determine commit date
+            if date_mode == "custom" and custom_iso:
+                iso_value = custom_iso
+                self.append_output(f"📅 Using custom date/time: {iso_value}\n")
+            else:
+                iso_value = now_iso()
+                self.append_output(f"📅 Using current date/time: {iso_value}\n")
+
+            # Future warning (second layer, in case dialog warning was bypassed)
+            if is_future(iso_value):
+                if not messagebox.askyesno(
+                    "Future commit warning",
+                    f"هشدار: این کامیت برای آینده است!\n\nتاریخ: {iso_value}\nزمان فعلی: {now_display()}\n\nآیا می‌خواهید کامیت انجام شود؟",
+                    parent=self.root,
+                ):
+                    self.append_output("⏭ Commit cancelled — future date not confirmed.\n")
+                    return
+
             self.append_output(f"📝 Preparing commit in {state.name}...\n")
 
             if add_mode == "all":
@@ -1137,7 +1160,23 @@ class GitManagerGUI:
                 messagebox.showinfo("Nothing staged", "No changes were staged for commit. Adjust the add scope and try again.")
                 return
 
-            GitOperations.run_git(["commit", "-m", message.strip()], cwd=repo)
+            if date_mode == "custom" and custom_iso:
+                GitOperations.run_git_env(
+                    ["commit", "-m", message.strip(), "--date", custom_iso],
+                    cwd=repo,
+                    extra_env={"GIT_AUTHOR_DATE": custom_iso, "GIT_COMMITTER_DATE": custom_iso},
+                )
+            else:
+                # For current time also ensure is_future already warned; use normal commit
+                # If current iso is future, use env to make explicit
+                if is_future(iso_value):
+                    GitOperations.run_git_env(
+                        ["commit", "-m", message.strip(), "--date", iso_value],
+                        cwd=repo,
+                        extra_env={"GIT_AUTHOR_DATE": iso_value, "GIT_COMMITTER_DATE": iso_value},
+                    )
+                else:
+                    GitOperations.run_git(["commit", "-m", message.strip()], cwd=repo)
             self.append_output(f"✅ Commit created in {state.name}: {message.strip()}")
             self.refresh_repos()
             self.append_output("✅ Commit complete. You may close the app or continue working.\n")
@@ -1272,6 +1311,16 @@ class GitManagerGUI:
                     raise
                 except Exception:
                     pass
+
+            # Future commit warning
+            if is_future(iso_value):
+                if not messagebox.askyesno(
+                    "Future commit warning",
+                    f"هشدار: این کامیت برای آینده است!\n\nتاریخ انتخابی: {iso_value}\nزمان فعلی: {now_display()}\n\nآیا می‌خواهید ادامه دهید؟",
+                    parent=self.root,
+                ):
+                    self.append_output("⏭ Move cancelled — future date not confirmed.\n")
+                    return
 
             original_branch = GitOperations.run_git(["branch", "--show-current"], cwd=repo).strip() or "HEAD"
             if not WorkingTreeManager.is_clean(repo):

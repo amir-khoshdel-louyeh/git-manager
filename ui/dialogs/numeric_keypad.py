@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Optional
 
-from utils.time_utils import build_custom_iso, is_after_last_commit, now_date_str, now_time_str
+from utils.time_utils import build_custom_iso, is_after_last_commit, is_future, now_date_str, now_time_str
 
 
 class NumericKeypadDialog(tk.Toplevel):
@@ -360,8 +360,25 @@ class NumericKeypadDialog(tk.Toplevel):
                         parent=self,
                     )
                     return
+                if is_future(custom_iso):
+                    if not messagebox.askyesno(
+                        "Future commit warning",
+                        f"هشدار: این کامیت برای آینده است!\n\nتاریخ انتخابی: {custom_iso}\nآیا می‌خواهید ادامه دهید؟",
+                        parent=self,
+                    ):
+                        return
                 self.custom_iso = custom_iso
             else:
+                # Current date/time may also be future if system clock is off; check
+                cur_iso = build_custom_iso(now_date_str(), now_time_str())
+                if is_future(cur_iso):
+                    # Still warn for current mode if somehow future
+                    if not messagebox.askyesno(
+                        "Future commit warning",
+                        f"هشدار: زمان فعلی سیستم در آینده است ({cur_iso}). آیا می‌خواهید کامیت با این زمان ثبت شود؟",
+                        parent=self,
+                    ):
+                        return
                 self.custom_iso = None
         else:
             self.date_mode = "current"

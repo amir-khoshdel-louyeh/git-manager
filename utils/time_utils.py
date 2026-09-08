@@ -107,3 +107,20 @@ def is_after_last_commit(custom_iso: str, last_commit_iso: str | None) -> bool:
     except ValueError:
         # If parsing fails, be conservative and allow; caller should have validated
         return True
+
+
+def is_future(iso_str: str) -> bool:
+    """Return True if iso datetime is strictly in the future relative to now."""
+    if not iso_str:
+        return False
+    try:
+        dt = parse_iso_to_dt(iso_str)
+        now = datetime.now(dt.tzinfo) if dt.tzinfo is not None else datetime.now()
+        # Normalize both to naive for comparison
+        if dt.tzinfo is not None:
+            dt = dt.replace(tzinfo=None)
+        if now.tzinfo is not None:
+            now = now.replace(tzinfo=None)
+        return dt > now
+    except ValueError:
+        return False
