@@ -1208,62 +1208,23 @@ class GitManagerGUI:
             if not GitOperations.git_ok(["rev-parse", "--verify", "--quiet", "local_commit"], cwd=repo):
                 raise GitManagerError("local_commit does not exist")
 
-            if GitOperations.git_ok(["remote", "get-url", "origin"], cwd=repo):
-                # Proactive internet check with English error before touching network
-                if not has_internet_connection(timeout=3.0):
-                    raise GitManagerError(f"{NO_INTERNET_MSG} — fetch stopped because there is no internet connection. Please check your connection.")
-                try:
-                    self.append_output("🔄 Fetching origin before move...\n")
-                    GitOperations.run_git(["fetch", "--prune", "origin"], cwd=repo)
-                except GitManagerError as exc:
-                    if self._is_no_internet_error(exc):
-                        raise GitManagerError(f"{NO_INTERNET_MSG} — fetch failed: {str(exc)}") from exc
-                    raise GitManagerError(
-                        f"Failed to fetch origin before move. Remote is unavailable or access is denied: {str(exc)}"
-                    ) from exc
-
-            remote_base = f"origin/{base_branch}"
-            if base_branch and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/remotes/{remote_base}"], cwd=repo):
-                ahead = int(
-                    GitOperations.run_git(["rev-list", "--count", f"{base_branch}..{remote_base}"], cwd=repo).strip() or "0"
-                )
-                behind = int(
-                    GitOperations.run_git(["rev-list", "--count", f"{remote_base}..{base_branch}"], cwd=repo).strip() or "0"
-                )
-                if ahead > 0 and behind > 0:
-                    raise GitManagerError(
-                        f"Local {base_branch} diverges from {remote_base}. Sync or rebase before moving commits."
-                    )
-                if ahead > 0:
-                    self.append_output(f"ℹ️ Local {base_branch} is behind {remote_base}; applying commits onto remote history.\n")
-                    start_ref = remote_base
-                elif behind > 0:
-                    raise GitManagerError(
-                        f"Local {base_branch} has unpushed commits. Push or rebase it before moving commits."
-                    )
-                else:
-                    start_ref = base_branch
-            else:
-                start_ref = base_branch
-
-            base_before = GitOperations.run_git(["rev-parse", "--verify", start_ref], cwd=repo).strip()
-            local_before = GitOperations.run_git(["rev-parse", "--verify", "local_commit"], cwd=repo).strip()
+            # Fast local computation before opening window (no network)
             pending = int(GitOperations.run_git(["rev-list", "--count", f"{base_branch}..local_commit"], cwd=repo).strip() or "0")
             if pending == 0:
                 messagebox.showinfo("No commits", "No commits to move.")
                 return
 
-            # Fetch last commit on base for date validation and display
+            # Fetch last commit on base for date validation and display (local only)
             last_commit_info = None
             last_commit_iso = None
             try:
-                if GitOperations.git_ok(["rev-parse", "--verify", "--quiet", start_ref], cwd=repo):
+                if base_branch and GitOperations.git_ok(["rev-parse", "--verify", "--quiet", base_branch], cwd=repo):
                     try:
                         last_commit_info = GitOperations.run_git(
-                            ["log", "-1", "--date=iso", "--pretty=format:%h  %ad  %s", start_ref], cwd=repo
+                            ["log", "-1", "--date=iso", "--pretty=format:%h  %ad  %s", base_branch], cwd=repo
                         ).strip()
                         last_commit_iso = GitOperations.run_git(
-                            ["log", "-1", "--pretty=format:%aI", start_ref], cwd=repo
+                            ["log", "-1", "--pretty=format:%aI", base_branch], cwd=repo
                         ).strip()
                         if not last_commit_info:
                             last_commit_info = None
@@ -1274,6 +1235,7 @@ class GitManagerGUI:
             except GitManagerError:
                 pass
 
+            # Open window first for fast UI response
             dialog = NumericKeypadDialog(
                 self.root,
                 "Move commits",
@@ -1321,6 +1283,67 @@ class GitManagerGUI:
                 ):
                     self.append_output("⏭ Move cancelled — future date not confirmed.\n")
                     return
+
+            # Network check and fetch only after window was shown
+            if GitOperations.git_ok(["remote", "get-url", "origin"], cwd=repo):
+                if not has_internet_connection(timeout=3.0):
+                    raise GitManagerError(f"{NO_INTERNET_MSG} — fetch stopped because there is no internet connection. Please check your connection.")
+                try:
+                    self.append_output("🔄 Fetching origin before move...\n")
+                    GitOperations.run_git(["fetch", "--prune", "origin"], cwd=repo)
+                except GitManagerError as exc:
+                    if self._is_no_internet_error(exc):
+                        raise GitManagerError(f"{NO_INTERNET_MSG} — fetch failed: {str(exc)}") from exc
+                    raise GitManagerError(
+                        f"Failed to fetch origin before move. Remote is unavailable or access is denied: {str(exc)}"
+                    ) from exc
+
+            remote_base = f"origin/{base_branch}"
+            if base_branch and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/remotes/{remote_base}"], cwd=repo):
+                ahead = int(
+                    GitOperations.run_git(["rev-list", "--count", f"{base_branch}..{remote_base}"], cwd=repo).strip() or "0"
+                )
+                behind = int(
+                    GitOperations.run_git(["rev-list", "--count", f"{remote_base}..{base_branch}"], cwd=repo).strip() or "0"
+                )
+                if ahead > 0 and behind > 0:
+                    raise GitManagerError(
+                        f"Local {base_branch} diverges from {remote_base}. Sync or rebase before moving commits."
+                    )
+                if ahead > 0:
+                    self.append_output(f"ℹ️ Local {base_branch} is behind {remote_base}; applying commits onto remote history.\n")
+                    start_ref = remote_base
+                elif behind > 0:
+                    raise GitManagerError(
+                        f"Local {base_branch} has unpushed commits. Push or rebase it before moving commits."
+                    )
+                else:
+                    start_ref = base_branch
+            else:
+                start_ref = base_branch
+
+            # Re-validate iso against updated start_ref tip (remote may have moved)
+            if start_ref != base_branch or last_commit_iso:
+                try:
+                    updated_last_iso = GitOperations.run_git(["log", "-1", "--pretty=format:%aI", start_ref], cwd=repo).strip()
+                    if updated_last_iso:
+                        from utils.time_utils import is_after_last_commit as _is_after2
+
+                        if not _is_after2(iso_value, updated_last_iso):
+                            raise GitManagerError(
+                                f"Chosen date/time {iso_value} must be after last commit on {start_ref} ({updated_last_iso})."
+                            )
+                except GitManagerError:
+                    raise
+                except Exception:
+                    pass
+
+            base_before = GitOperations.run_git(["rev-parse", "--verify", start_ref], cwd=repo).strip()
+            local_before = GitOperations.run_git(["rev-parse", "--verify", "local_commit"], cwd=repo).strip()
+            # Re-validate pending after fetch
+            pending_after = int(GitOperations.run_git(["rev-list", "--count", f"{base_branch}..local_commit"], cwd=repo).strip() or "0")
+            if num > pending_after:
+                raise GitManagerError(f"Selected {num} commits but only {pending_after} pending after fetch. Please retry.")
 
             original_branch = GitOperations.run_git(["branch", "--show-current"], cwd=repo).strip() or "HEAD"
             if not WorkingTreeManager.is_clean(repo):
