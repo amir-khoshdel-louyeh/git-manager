@@ -13,12 +13,39 @@ class GitManagerError(Exception):
     """Raised for recoverable git-manager errors."""
 
 
+# Commands that require internet connectivity
+_NETWORK_GIT_COMMANDS = {"fetch", "push", "pull", "clone", "ls-remote"}
+
+
+def _requires_internet(args: Sequence[str]) -> bool:
+    return bool(args) and args[0] in _NETWORK_GIT_COMMANDS
+
+
+def _check_internet_before_network_command(args: Sequence[str]) -> None:
+    if _requires_internet(args):
+        # Local import to avoid circular dependency
+        from utils.network import NO_INTERNET_MSG, has_internet_connection
+
+        if not has_internet_connection(timeout=3.0):
+            raise GitManagerError(f"{NO_INTERNET_MSG} — اتصال اینترنت برقرار نیست. لطفاً اتصال خود را بررسی کنید.")
+
+
+def _maybe_translate_network_error(stderr: str) -> str:
+    """If stderr looks like a network failure, prepend Persian message."""
+    from utils.network import NO_INTERNET_MSG, is_network_error_message
+
+    if is_network_error_message(stderr):
+        return f"{NO_INTERNET_MSG} — {stderr}"
+    return stderr
+
+
 class GitOperations:
     """Thin wrappers around git invocations."""
 
     @staticmethod
     def run_git(args: Sequence[str], *, cwd: Path) -> str:
         """Run a git command and return stdout; raise on failure."""
+        _check_internet_before_network_command(args)
         result = subprocess.run(
             ["git", *args],
             cwd=str(cwd),
@@ -28,6 +55,7 @@ class GitOperations:
         )
         if result.returncode != 0:
             stderr = result.stderr.strip() or result.stdout.strip()
+            stderr = _maybe_translate_network_error(stderr)
             quoted = " ".join(shlex.quote(a) for a in args)
             raise GitManagerError(f"git {quoted} failed in {cwd}: {stderr}")
         return result.stdout
@@ -35,6 +63,7 @@ class GitOperations:
     @staticmethod
     def run_git_env(args: Sequence[str], *, cwd: Path, extra_env: dict[str, str]) -> str:
         """Run git with additional environment variables."""
+        _check_internet_before_network_command(args)
         env = os.environ.copy()
         env.update(extra_env)
         result = subprocess.run(
@@ -47,6 +76,7 @@ class GitOperations:
         )
         if result.returncode != 0:
             stderr = result.stderr.strip() or result.stdout.strip()
+            stderr = _maybe_translate_network_error(stderr)
             quoted = " ".join(shlex.quote(a) for a in args)
             raise GitManagerError(f"git {quoted} failed in {cwd}: {stderr}")
         return result.stdout

@@ -17,6 +17,7 @@ from core.settings_db import SettingsDB
 from core.working_tree_manager import WorkingTreeManager
 from ui.dialogs import CommitDialog, NumericKeypadDialog, PreviewModeDialog, ResetDialog, SettingsDialog
 from ui.theme import apply_theme as apply_theme_style
+from utils.network import NO_INTERNET_MSG, has_internet_connection, is_network_error_message
 from utils.time_utils import now_display, now_iso
 
 
@@ -86,6 +87,30 @@ class GitManagerGUI:
             "This may interrupt the current task.",
             parent=self.root,
         )
+
+    # --- network helpers -------------------------------------------------
+    def _is_no_internet_error(self, exc: Exception) -> bool:
+        msg = str(exc)
+        return NO_INTERNET_MSG in msg or is_network_error_message(msg)
+
+    def _show_no_internet_error(self, exc: Exception | None = None) -> None:
+        detail = str(exc) if exc else ""
+        # Always show the requested Persian message prominently
+        messagebox.showerror(
+            "عدم اتصال به اینترنت",
+            f"{NO_INTERNET_MSG}!\nلطفاً اتصال اینترنت خود را بررسی کنید.\n{detail}",
+            parent=self.root,
+        )
+        self.append_output(f"\n❌ {NO_INTERNET_MSG}! لطفاً اتصال اینترنت را بررسی کنید.\n")
+        if detail:
+            self.append_output(f"   جزئیات: {detail}\n")
+
+    def _check_internet_or_notify(self) -> bool:
+        """Return True if online, else show error and return False."""
+        if not has_internet_connection(timeout=3.0):
+            self._show_no_internet_error()
+            return False
+        return True
 
     def apply_theme(self, mode: str) -> None:
         self.theme_mode = mode
@@ -751,7 +776,10 @@ class GitManagerGUI:
                 except GitManagerError:
                     self.append_output("⚠️ Stash remains – resolve manually with 'git stash pop'\n")
             self.append_output(f"\n❌ Error: {str(exc)}\n")
-            messagebox.showerror("Operation Failed", "An error occurred. Check the output panel for details.")
+            if self._is_no_internet_error(exc):
+                self._show_no_internet_error(exc)
+            else:
+                messagebox.showerror("Operation Failed", "An error occurred. Check the output panel for details.")
         finally:
             self._end_operation()
 
@@ -851,7 +879,10 @@ class GitManagerGUI:
             self.append_output("✅ Preview complete. You may review the output and close this view.\n")
         except GitManagerError as exc:
             self.append_output(f"\n❌ Error: {str(exc)}\n")
-            messagebox.showerror("Operation Failed", "An error occurred. Check the output panel for details.")
+            if self._is_no_internet_error(exc):
+                self._show_no_internet_error(exc)
+            else:
+                messagebox.showerror("Operation Failed", "An error occurred. Check the output panel for details.")
         finally:
             self._end_operation()
 
@@ -906,7 +937,10 @@ class GitManagerGUI:
             self.append_output("✅ Reset complete. The repository is now on the target branch.\n")
         except GitManagerError as exc:
             self.append_output(f"\n❌ Error: {str(exc)}\n")
-            messagebox.showerror("Reset Failed", "An error occurred during reset. Check the output panel for details.")
+            if self._is_no_internet_error(exc):
+                self._show_no_internet_error(exc)
+            else:
+                messagebox.showerror("Reset Failed", "An error occurred during reset. Check the output panel for details.")
         finally:
             self._end_operation()
 
@@ -964,7 +998,10 @@ class GitManagerGUI:
             self.append_output("✅ Commit complete. You may close the app or continue working.\n")
         except GitManagerError as exc:
             self.append_output(f"\n❌ Error: {str(exc)}\n")
-            messagebox.showerror("Commit Failed", "An error occurred while committing. Check the output panel for details.")
+            if self._is_no_internet_error(exc):
+                self._show_no_internet_error(exc)
+            else:
+                messagebox.showerror("Commit Failed", "An error occurred while committing. Check the output panel for details.")
         finally:
             self._end_operation()
 
@@ -988,13 +1025,18 @@ class GitManagerGUI:
                 raise GitManagerError("local_commit does not exist")
 
             if GitOperations.git_ok(["remote", "get-url", "origin"], cwd=repo):
+                # Proactive internet check with Persian error before touching network
+                if not has_internet_connection(timeout=3.0):
+                    raise GitManagerError(f"{NO_INTERNET_MSG} — fetch متوقف شد چون اینترنت وصل نیست. لطفاً اتصال اینترنت را بررسی کنید.")
                 try:
                     self.append_output("🔄 Fetching origin before move...\n")
                     GitOperations.run_git(["fetch", "--prune", "origin"], cwd=repo)
                 except GitManagerError as exc:
+                    if self._is_no_internet_error(exc):
+                        raise GitManagerError(f"{NO_INTERNET_MSG} — fetch ناموفق بود: {str(exc)}") from exc
                     raise GitManagerError(
                         f"Failed to fetch origin before move. Remote is unavailable or access is denied: {str(exc)}"
-                    )
+                    ) from exc
 
             remote_base = f"origin/{base_branch}"
             if base_branch and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/remotes/{remote_base}"], cwd=repo):
@@ -1227,8 +1269,15 @@ class GitManagerGUI:
                 raise GitManagerError(f"Found commit(s) with author name not matching '{expected_name}'")
 
             self.append_output(f"✅ All {processed_count} commits have correct author info (will be attributed to {expected_name} <{expected_email}>)\n")
+            if not has_internet_connection(timeout=3.0):
+                raise GitManagerError(f"{NO_INTERNET_MSG} — push متوقف شد چون اینترنت وصل نیست. لطفاً اتصال اینترنت را بررسی کنید.")
             self.append_output(f"🚀 Pushing to origin {base_branch}...\n")
-            GitOperations.run_git(["push", "origin", f"{temp_branch}:{base_branch}"], cwd=repo)
+            try:
+                GitOperations.run_git(["push", "origin", f"{temp_branch}:{base_branch}"], cwd=repo)
+            except GitManagerError as exc:
+                if self._is_no_internet_error(exc):
+                    raise GitManagerError(f"{NO_INTERNET_MSG} — push ناموفق بود: {str(exc)}") from exc
+                raise
             self.append_output(f"✅ Done! {processed_count} commits moved with date/time {now_iso_value}\n")
 
             BranchManager.checkout(repo, base_branch)
@@ -1375,7 +1424,10 @@ class GitManagerGUI:
                         WorkingTreeManager.pop_stash(repo)
                     except GitManagerError:
                         self.append_output("⚠️ Rollback stash pop failed. Resolve manually with 'git stash pop'\n")
-            messagebox.showerror("Operation Failed", "An error occurred. Check the output panel for details.")
+            if self._is_no_internet_error(exc):
+                self._show_no_internet_error(exc)
+            else:
+                messagebox.showerror("Operation Failed", "An error occurred. Check the output panel for details.")
         finally:
             # Guarantee temp_branch cleanup even if exception occurred before except block
             if temp_branch and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{temp_branch}"], cwd=repo):

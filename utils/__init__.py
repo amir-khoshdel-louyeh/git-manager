@@ -1,5 +1,6 @@
 """Utility helpers."""
 
+from utils.network import has_internet_connection, is_network_error_message
 from utils.platform import enable_windows_dpi_awareness
 from utils.time_utils import (
     build_custom_iso,
@@ -20,4 +21,6 @@ __all__ = [
     "parse_iso_to_dt",
     "is_after_last_commit",
     "enable_windows_dpi_awareness",
+    "has_internet_connection",
+    "is_network_error_message",
 ]
