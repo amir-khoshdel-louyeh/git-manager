@@ -96,13 +96,13 @@ def is_after_last_commit(custom_iso: str, last_commit_iso: str | None) -> bool:
     try:
         custom_dt = parse_iso_to_dt(custom_iso)
         last_dt = parse_iso_to_dt(last_commit_iso)
-        # Normalize: compare naive datetimes (strip timezone) to avoid
-        # offset-naive vs offset-aware comparison errors. Git log may return
-        # aware (+00:00) while custom is naive.
-        if custom_dt.tzinfo is not None:
-            custom_dt = custom_dt.replace(tzinfo=None)
-        if last_dt.tzinfo is not None:
-            last_dt = last_dt.replace(tzinfo=None)
+        # Custom dates omit an offset and are entered as local time. Attach the
+        # local timezone before comparing with Git's timezone-aware timestamp.
+        local_tz = datetime.now().astimezone().tzinfo
+        if custom_dt.tzinfo is None:
+            custom_dt = custom_dt.replace(tzinfo=local_tz)
+        if last_dt.tzinfo is None:
+            last_dt = last_dt.replace(tzinfo=local_tz)
         return custom_dt > last_dt
     except ValueError:
         # If parsing fails, be conservative and allow; caller should have validated
