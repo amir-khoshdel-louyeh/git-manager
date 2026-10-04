@@ -1245,6 +1245,15 @@ class GitManagerGUI:
             except GitManagerError:
                 pass
 
+            # Pending commit subjects (oldest first) for the selection preview
+            try:
+                commit_items = GitOperations.run_git(
+                    ["log", "--reverse", "--pretty=format:%h %s", f"{base_branch}..local_commit"], cwd=repo
+                ).strip().splitlines()
+                commit_items = [line for line in commit_items if line]
+            except GitManagerError:
+                commit_items = []
+
             # Open window first for fast UI response
             dialog = NumericKeypadDialog(
                 self.root,
@@ -1260,6 +1269,7 @@ class GitManagerGUI:
                 work_end_hour=getattr(self, "work_end_hour", "18:00"),
                 min_commits_per_day=getattr(self, "min_commits_per_day", 1),
                 max_commits_per_day=getattr(self, "max_commits_per_day", 10),
+                commit_items=commit_items,
             )
             self.root.wait_window(dialog)
             num = dialog.result

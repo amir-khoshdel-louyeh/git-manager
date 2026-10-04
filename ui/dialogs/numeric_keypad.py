@@ -1,24 +1,60 @@
-"""Numeric keypad dialog for commit count selection with date/time options."""
+"""Commit selection dialog with date options (mode B layout)."""
 
 from __future__ import annotations
 
 import tkinter as tk
+from datetime import timedelta
 from tkinter import messagebox, ttk
 from typing import Optional
 
-from utils.time_utils import build_custom_iso, is_after_last_commit, is_future, now_date_str, now_time_str
+from utils.time_utils import (
+    build_custom_iso,
+    is_after_last_commit,
+    is_future,
+    now_date_str,
+    now_time_str,
+    parse_iso_to_dt,
+)
+
+
+def suggest_date_after(last_commit_iso: Optional[str]) -> str:
+    """Return the suggested date: day after the last commit (YYYY-MM-DD).
+
+    Falls back to today when there is no last commit or it can't be parsed.
+    """
+    if last_commit_iso:
+        try:
+            return (parse_iso_to_dt(last_commit_iso).date() + timedelta(days=1)).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    return now_date_str()
+
+
+# Display scale for this dialog (sizes and fonts are multiplied by this).
+_UI_SCALE = 1.5
+
+
+def _px(value: int) -> int:
+    """Scale a pixel size (padding, width, wrap length, geometry)."""
+    return int(round(value * _UI_SCALE))
+
+
+def _font(name: str, size: int, *attrs: str) -> tuple:
+    """Scale a font tuple, e.g. _font("Helvetica", 10, "bold")."""
+    return (name, int(round(size * _UI_SCALE)), *attrs)
 
 
 class NumericKeypadDialog(tk.Toplevel):
-    """Custom dialog with numeric keypad for entering number of commits.
+    """Dialog for selecting number of commits with date options (mode B layout).
 
-    When ``show_date_options`` is True (used for Move Commits), the dialog also
-    shows a horizontally-split layout:
-    - Left column: number display + large keypad (bigger window)
-    - Right column: last commit info + date radios (today / specific date / range).
-      Only the sub-panel of the selected mode is visible; specific date is
+    When ``show_date_options`` is True (used for Move Commits), the dialog shows
+    a horizontally-split layout:
+    - Left column ("Commits to move"): count spinbox + commit list preview
+      showing the first N pending commits (oldest first).
+    - Right column: last commit info + "When" section (Today / Day / Range).
+      Only the sub-panel of the selected mode is visible; specific day is
       date-only plus a time range (from → to) on that same day.
-    The window is intentionally larger and uses a horizontal grid.
+    A live summary line spans the bottom above OK/Cancel.
     """
 
     def __init__(
@@ -36,11 +72,12 @@ class NumericKeypadDialog(tk.Toplevel):
         work_end_hour: str = "18:00",
         min_commits_per_day: int = 1,
         max_commits_per_day: int = 10,
+        commit_items: Optional[list[str]] = None,
     ) -> None:
         super().__init__(parent)
         self.title(title)
         # Bigger window: allow resizing horizontally, but keep minsize large
-        self.minsize(880, 560)
+        self.minsize(_px(920), _px(600))
         self.resizable(True, True)
         self.result: Optional[int] = None
         self.minvalue = minvalue
@@ -65,6 +102,8 @@ class NumericKeypadDialog(tk.Toplevel):
         self.range_end_date_var: Optional[tk.StringVar] = None
         self.min_commits_per_day = max(0, int(min_commits_per_day))
         self.max_commits_per_day = max(1, int(max_commits_per_day))
+        # Pending commits (oldest first), e.g. ["a1b2c3 Fix login", ...]
+        self.commit_items: list[str] = list(commit_items or [])
 
         dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
         self.configure(bg=dialog_bg)
@@ -74,81 +113,112 @@ class NumericKeypadDialog(tk.Toplevel):
         self.grab_set()
 
         # Prompt label (spans full width, top)
-        ttk.Label(self, text=prompt, font=("Helvetica", 12, "bold"), justify=tk.CENTER, style="Dialog.TLabel", wraplength=820).pack(pady=(16, 10), padx=20, fill=tk.X)
+        ttk.Label(self, text=prompt, font=_font("Helvetica", 12, "bold"), justify=tk.CENTER, style="Dialog.TLabel", wraplength=_px(820)).pack(pady=(_px(16), _px(10)), padx=_px(20), fill=tk.X)
 
         # ===================== HORIZONTAL GRID CONTENT =====================
         content = ttk.Frame(self, style="Dialog.TFrame")
-        content.pack(fill=tk.BOTH, expand=True, padx=20, pady=5)
+        content.pack(fill=tk.BOTH, expand=True, padx=_px(20), pady=_px(5))
 
         if self.show_date_options:
-            # Horizontal split: left = number / keypad, right = date options
+            # Horizontal split: left = count + commit list, right = date options
             content.columnconfigure(0, weight=1, uniform="col")
             content.columnconfigure(1, weight=1, uniform="col")
             content.rowconfigure(0, weight=1)
 
-            # ----- LEFT COLUMN -----
-            left = ttk.LabelFrame(content, text="Number of commits", padding=14, style="Dialog.TLabelframe")
-            left.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=5)
+            # ----- LEFT COLUMN: Commits to move -----
+            left = ttk.LabelFrame(content, text="Commits to move", padding=_px(14), style="Dialog.TLabelframe")
+            left.grid(row=0, column=0, sticky="nsew", padx=(0, _px(10)), pady=_px(5))
             left.columnconfigure(0, weight=1)
+            left.rowconfigure(2, weight=1)
 
-            # Display value - bigger
-            self.value_var = tk.StringVar(value="0")
+            # Count row: slider + number + All button + total (easy grab, no tiny +/-)
+            self.value_var = tk.StringVar(value=str(maxvalue))
+            self._syncing_scale = False
+            count_row = ttk.Frame(left, style="Dialog.TFrame")
+            count_row.grid(row=0, column=0, sticky="ew", pady=(_px(4), _px(8)))
+            ttk.Label(count_row, text="Count:", font=_font("Helvetica", 11, "bold"), style="Dialog.TLabel").pack(side=tk.LEFT)
+            scale_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
+            scale_trough = "#1e2228" if theme_mode == "dark" else "#d7dde5"
+            scale_fg = "#e8e8e8" if theme_mode == "dark" else "#111827"
+            self.count_scale = tk.Scale(
+                count_row,
+                from_=minvalue,
+                to=maxvalue,
+                orient=tk.HORIZONTAL,
+                resolution=1,
+                showvalue=False,
+                tickinterval=0,
+                length=_px(200),
+                width=_px(18),
+                sliderlength=_px(30),
+                command=self._on_slide,
+                bg=scale_bg,
+                fg=scale_fg,
+                troughcolor=scale_trough,
+                activebackground="#4a90d9",
+                highlightthickness=0,
+                bd=0,
+            )
+            self.count_scale.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(_px(8), _px(4)))
+            self.count_scale.set(maxvalue)
+            ttk.Label(count_row, textvariable=self.value_var, font=_font("Helvetica", 12, "bold"), width=_px(4), anchor=tk.CENTER, style="Dialog.TLabel").pack(side=tk.LEFT)
+            ttk.Button(count_row, text="All", width=_px(6), command=self._on_select_all).pack(side=tk.LEFT, padx=(_px(8), 0))
+            ttk.Label(count_row, text=f"of {maxvalue}", font=_font("Helvetica", 10), style="Dialog.TLabel").pack(side=tk.LEFT, padx=(_px(8), 0))
+
+            self.count_info_var = tk.StringVar(value="")
+            ttk.Label(left, textvariable=self.count_info_var, font=_font("Helvetica", 9, "italic"), style="Dialog.TLabel").grid(row=1, column=0, sticky="w", pady=(0, _px(6)))
+
+            # Commit list preview (first N, oldest first)
+            list_frame = ttk.Frame(left, style="Dialog.TFrame")
+            list_frame.grid(row=2, column=0, sticky="nsew")
+            list_frame.columnconfigure(0, weight=1)
+            list_frame.rowconfigure(0, weight=1)
             entry_bg = "#1e2228" if theme_mode == "dark" else "#f1f5f9"
             entry_fg = "#e8e8e8" if theme_mode == "dark" else "#111827"
-            display = tk.Entry(
-                left,
-                textvariable=self.value_var,
-                font=("Helvetica", 18, "bold"),
-                width=18,
-                justify=tk.CENTER,
-                state="readonly",
+            self.commit_listbox = tk.Listbox(
+                list_frame,
+                height=_px(12),
+                width=_px(44),
+                font=_font("Courier", 9),
                 bg=entry_bg,
                 fg=entry_fg,
-                readonlybackground=entry_bg,
-                disabledforeground=entry_fg,
+                selectbackground=entry_bg,
+                selectforeground=entry_fg,
+                activestyle="none",
+                highlightthickness=0,
                 relief=tk.SOLID,
                 bd=1,
+                takefocus=0,
             )
-            display.grid(row=0, column=0, pady=(8, 12), padx=10, sticky="ew")
-
-            # Numeric keypad - bigger buttons, grid layout
-            keypad_frame = ttk.Frame(left, style="Dialog.TFrame")
-            keypad_frame.grid(row=1, column=0, pady=6, padx=10)
-
-            buttons = [
-                ["7", "8", "9"],
-                ["4", "5", "6"],
-                ["1", "2", "3"],
-                ["0", "C", "⌫"],
-            ]
-
-            for r, row in enumerate(buttons):
-                row_frame = ttk.Frame(keypad_frame, style="Dialog.TFrame")
-                row_frame.grid(row=r, column=0, pady=3)
-                for c, btn_text in enumerate(row):
-                    btn = ttk.Button(row_frame, text=btn_text, width=7, command=lambda t=btn_text: self._on_key(t))
-                    btn.grid(row=0, column=c, padx=5, pady=3, ipadx=4, ipady=8)
-                    # Make buttons more tactile: larger padding
-
-            # Hint label under keypad
-            ttk.Label(left, text="Use keypad or keyboard (0-9, Backspace, C)", font=("Helvetica", 8, "italic"), style="Dialog.TLabel").grid(row=2, column=0, pady=(10, 4))
+            self.commit_listbox.grid(row=0, column=0, sticky="nsew")
+            list_scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.commit_listbox.yview)
+            list_scroll.grid(row=0, column=1, sticky="ns")
+            self.commit_listbox.configure(yscrollcommand=list_scroll.set)
+            # Click a row to select the first N commits up to that row
+            self.commit_listbox.bind("<ButtonRelease-1>", self._on_list_click)
+            ttk.Label(
+                left,
+                text="Tip: drag the slider or click a row to pick how many.",
+                font=_font("Helvetica", 8, "italic"),
+                style="Dialog.TLabel",
+            ).grid(row=3, column=0, sticky="w", pady=(_px(6), 0))
 
             # ----- RIGHT COLUMN -----
             right = ttk.Frame(content, style="Dialog.TFrame")
-            right.grid(row=0, column=1, sticky="nsew", padx=(10, 0), pady=5)
+            right.grid(row=0, column=1, sticky="nsew", padx=(_px(10), 0), pady=_px(5))
             right.columnconfigure(0, weight=1)
             right.rowconfigure(1, weight=1)
 
             # Last commit info — compact, collapsible feel
             if self.last_commit_info:
-                info_frame = ttk.LabelFrame(right, text="Last commit on base", padding=10, style="Dialog.TLabelframe")
-                info_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+                info_frame = ttk.LabelFrame(right, text="Last commit on base", padding=_px(10), style="Dialog.TLabelframe")
+                info_frame.grid(row=0, column=0, sticky="ew", pady=(0, _px(10)))
                 info_frame.columnconfigure(0, weight=1)
                 info_label = ttk.Label(
                     info_frame,
                     text=self.last_commit_info,
-                    font=("Courier", 9),
-                    wraplength=380,
+                    font=_font("Courier", 9),
+                    wraplength=_px(380),
                     justify=tk.LEFT,
                     style="Dialog.TLabel",
                 )
@@ -156,119 +226,118 @@ class NumericKeypadDialog(tk.Toplevel):
                 ttk.Label(
                     info_frame,
                     text="Chosen date must be after this commit.",
-                    font=("Helvetica", 8, "italic"),
+                    font=_font("Helvetica", 8, "italic"),
                     style="Dialog.TLabel",
-                ).grid(row=1, column=0, sticky="w", pady=(6, 0))
+                ).grid(row=1, column=0, sticky="w", pady=(_px(6), 0))
             else:
                 ttk.Label(
                     right,
                     text="No prior commits on base (first commit). Any date is allowed.",
-                    font=("Helvetica", 9, "italic"),
+                    font=_font("Helvetica", 9, "italic"),
                     style="Dialog.TLabel",
-                    wraplength=380,
-                ).grid(row=0, column=0, sticky="ew", pady=(0, 10))
+                    wraplength=_px(380),
+                ).grid(row=0, column=0, sticky="ew", pady=(0, _px(10)))
 
-            date_frame = ttk.LabelFrame(right, text="Commit date", padding=12, style="Dialog.TLabelframe")
-            date_frame.grid(row=1, column=0, sticky="new", pady=5)
+            date_frame = ttk.LabelFrame(right, text="When", padding=_px(12), style="Dialog.TLabelframe")
+            date_frame.grid(row=1, column=0, sticky="new", pady=_px(5))
             date_frame.columnconfigure(0, weight=1)
 
             self.date_mode_var = tk.StringVar(value="current")
 
-            # Option 1: today (no sub-panel)
+            # Mode switch: single horizontal row (Today | Day | Range)
+            mode_row = ttk.Frame(date_frame, style="Dialog.TFrame")
+            mode_row.grid(row=0, column=0, sticky="ew", pady=(_px(2), _px(8)))
             ttk.Radiobutton(
-                date_frame,
-                text="Today  (current date and time)",
+                mode_row,
+                text="Today",
                 variable=self.date_mode_var,
                 value="current",
                 style="Dialog.TRadiobutton",
                 command=self._on_date_mode_change,
-            ).grid(row=0, column=0, sticky="w", pady=(2, 6))
-
-            ttk.Separator(date_frame, orient="horizontal").grid(row=1, column=0, sticky="ew", pady=4)
-
-            # Option 2: specific date (date only, no time entry)
+            ).pack(side=tk.LEFT, padx=(0, _px(12)))
             ttk.Radiobutton(
-                date_frame,
-                text="Specific date",
+                mode_row,
+                text="Day",
                 variable=self.date_mode_var,
                 value="custom",
                 style="Dialog.TRadiobutton",
                 command=self._on_date_mode_change,
-            ).grid(row=2, column=0, sticky="w", pady=(6, 2))
-
-            custom_frame = ttk.Frame(date_frame, style="Dialog.TFrame")
-            custom_frame.grid(row=3, column=0, sticky="ew", padx=(24, 0), pady=(0, 4))
-            custom_frame.columnconfigure(1, weight=1)
-            self._custom_frame = custom_frame
-
-            self.custom_date_var = tk.StringVar(value=now_date_str())
-            self.custom_time_from_var = tk.StringVar(value=work_start_hour)
-            self.custom_time_to_var = tk.StringVar(value=work_end_hour)
-
-            ttk.Label(custom_frame, text="Date (YYYY-MM-DD):", font=("Helvetica", 10), style="Dialog.TLabel").grid(row=0, column=0, sticky="w", pady=4, padx=(4, 8))
-            self.custom_date_entry = ttk.Entry(custom_frame, textvariable=self.custom_date_var, width=20, style="Dialog.TEntry", font=("Helvetica", 10))
-            self.custom_date_entry.grid(row=0, column=1, sticky="ew", pady=4, padx=(0, 4))
-            ttk.Label(custom_frame, text="From (HH:MM):", font=("Helvetica", 10), style="Dialog.TLabel").grid(row=1, column=0, sticky="w", pady=4, padx=(4, 8))
-            self.custom_time_from_entry = ttk.Entry(custom_frame, textvariable=self.custom_time_from_var, width=20, style="Dialog.TEntry", font=("Helvetica", 10), justify=tk.CENTER)
-            self.custom_time_from_entry.grid(row=1, column=1, sticky="ew", pady=4, padx=(0, 4))
-            ttk.Label(custom_frame, text="To (HH:MM):", font=("Helvetica", 10), style="Dialog.TLabel").grid(row=2, column=0, sticky="w", pady=4, padx=(4, 8))
-            self.custom_time_to_entry = ttk.Entry(custom_frame, textvariable=self.custom_time_to_var, width=20, style="Dialog.TEntry", font=("Helvetica", 10), justify=tk.CENTER)
-            self.custom_time_to_entry.grid(row=2, column=1, sticky="ew", pady=4, padx=(0, 4))
-
-            ttk.Separator(date_frame, orient="horizontal").grid(row=4, column=0, sticky="ew", pady=4)
-
-            # Option 3: range
+            ).pack(side=tk.LEFT, padx=_px(12))
             ttk.Radiobutton(
-                date_frame,
-                text="Date range  (from → to)",
+                mode_row,
+                text="Range",
                 variable=self.date_mode_var,
                 value="range",
                 style="Dialog.TRadiobutton",
                 command=self._on_date_mode_change,
-            ).grid(row=5, column=0, sticky="w", pady=(6, 2))
+            ).pack(side=tk.LEFT, padx=_px(12))
+
+            custom_frame = ttk.Frame(date_frame, style="Dialog.TFrame")
+            custom_frame.grid(row=1, column=0, sticky="ew", padx=(_px(8), 0), pady=(0, _px(4)))
+            custom_frame.columnconfigure(1, weight=1)
+            self._custom_frame = custom_frame
+
+            self.custom_date_var = tk.StringVar(value=suggest_date_after(last_commit_iso))
+            self.custom_time_from_var = tk.StringVar(value=work_start_hour)
+            self.custom_time_to_var = tk.StringVar(value=work_end_hour)
+
+            ttk.Label(custom_frame, text="Date (YYYY-MM-DD):", font=_font("Helvetica", 10), style="Dialog.TLabel").grid(row=0, column=0, sticky="w", pady=_px(4), padx=(_px(4), _px(8)))
+            self.custom_date_entry = ttk.Entry(custom_frame, textvariable=self.custom_date_var, width=_px(20), style="Dialog.TEntry", font=_font("Helvetica", 10))
+            self.custom_date_entry.grid(row=0, column=1, sticky="ew", pady=_px(4), padx=(0, _px(4)))
+            ttk.Label(custom_frame, text="From (HH:MM):", font=_font("Helvetica", 10), style="Dialog.TLabel").grid(row=1, column=0, sticky="w", pady=_px(4), padx=(_px(4), _px(8)))
+            self.custom_time_from_entry = ttk.Entry(custom_frame, textvariable=self.custom_time_from_var, width=_px(20), style="Dialog.TEntry", font=_font("Helvetica", 10), justify=tk.CENTER)
+            self.custom_time_from_entry.grid(row=1, column=1, sticky="ew", pady=_px(4), padx=(0, _px(4)))
+            ttk.Label(custom_frame, text="To (HH:MM):", font=_font("Helvetica", 10), style="Dialog.TLabel").grid(row=2, column=0, sticky="w", pady=_px(4), padx=(_px(4), _px(8)))
+            self.custom_time_to_entry = ttk.Entry(custom_frame, textvariable=self.custom_time_to_var, width=_px(20), style="Dialog.TEntry", font=_font("Helvetica", 10), justify=tk.CENTER)
+            self.custom_time_to_entry.grid(row=2, column=1, sticky="ew", pady=_px(4), padx=(0, _px(4)))
 
             range_frame = ttk.Frame(date_frame, style="Dialog.TFrame")
-            range_frame.grid(row=6, column=0, sticky="ew", padx=(24, 0), pady=(0, 2))
+            range_frame.grid(row=2, column=0, sticky="ew", padx=(_px(8), 0), pady=(0, _px(2)))
             range_frame.columnconfigure(1, weight=1)
             self._range_frame = range_frame
 
-            self.range_start_date_var = tk.StringVar(value=now_date_str())
-            self.range_end_date_var = tk.StringVar(value=now_date_str())
+            self.range_start_date_var = tk.StringVar(value=suggest_date_after(last_commit_iso))
+            self.range_end_date_var = tk.StringVar(value=suggest_date_after(last_commit_iso))
 
-            ttk.Label(range_frame, text="From (YYYY-MM-DD):", font=("Helvetica", 10), style="Dialog.TLabel").grid(row=0, column=0, sticky="w", pady=4, padx=(4, 8))
-            self.range_start_entry = ttk.Entry(range_frame, textvariable=self.range_start_date_var, width=20, style="Dialog.TEntry", font=("Helvetica", 10))
-            self.range_start_entry.grid(row=0, column=1, sticky="ew", pady=4, padx=(0, 4))
+            ttk.Label(range_frame, text="From (YYYY-MM-DD):", font=_font("Helvetica", 10), style="Dialog.TLabel").grid(row=0, column=0, sticky="w", pady=_px(4), padx=(_px(4), _px(8)))
+            self.range_start_entry = ttk.Entry(range_frame, textvariable=self.range_start_date_var, width=_px(20), style="Dialog.TEntry", font=_font("Helvetica", 10))
+            self.range_start_entry.grid(row=0, column=1, sticky="ew", pady=_px(4), padx=(0, _px(4)))
 
-            ttk.Label(range_frame, text="To (YYYY-MM-DD):", font=("Helvetica", 10), style="Dialog.TLabel").grid(row=1, column=0, sticky="w", pady=4, padx=(4, 8))
-            self.range_end_entry = ttk.Entry(range_frame, textvariable=self.range_end_date_var, width=20, style="Dialog.TEntry", font=("Helvetica", 10))
-            self.range_end_entry.grid(row=1, column=1, sticky="ew", pady=4, padx=(0, 4))
+            ttk.Label(range_frame, text="To (YYYY-MM-DD):", font=_font("Helvetica", 10), style="Dialog.TLabel").grid(row=1, column=0, sticky="w", pady=_px(4), padx=(_px(4), _px(8)))
+            self.range_end_entry = ttk.Entry(range_frame, textvariable=self.range_end_date_var, width=_px(20), style="Dialog.TEntry", font=_font("Helvetica", 10))
+            self.range_end_entry.grid(row=1, column=1, sticky="ew", pady=_px(4), padx=(0, _px(4)))
 
             self.range_hint_label = ttk.Label(
                 range_frame,
                 text="",
-                font=("Helvetica", 8, "italic"),
+                font=_font("Helvetica", 8, "italic"),
                 style="Dialog.TLabel",
-                wraplength=380,
+                wraplength=_px(380),
                 justify=tk.LEFT,
             )
-            self.range_hint_label.grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0), padx=4)
+            self.range_hint_label.grid(row=2, column=0, columnspan=2, sticky="w", pady=(_px(6), 0), padx=_px(4))
 
             self._set_custom_entries_state(tk.DISABLED)
             self._set_range_entries_state(tk.DISABLED)
             self._update_date_panels()
-            # Live capacity hint: refresh when dates or commit count change
-            self.range_start_date_var.trace_add("write", lambda *a: self._update_range_hint())
-            self.range_end_date_var.trace_add("write", lambda *a: self._update_range_hint())
-            self.value_var.trace_add("write", lambda *a: self._update_range_hint())
+            # Live updates: refresh list, capacity hint and summary on any change
+            self.range_start_date_var.trace_add("write", lambda *a: self._refresh_live())
+            self.range_end_date_var.trace_add("write", lambda *a: self._refresh_live())
+            self.custom_date_var.trace_add("write", lambda *a: self._update_summary())
+            self.custom_time_from_var.trace_add("write", lambda *a: self._update_summary())
+            self.custom_time_to_var.trace_add("write", lambda *a: self._update_summary())
+            self.value_var.trace_add("write", lambda *a: self._refresh_live())
+            self._refresh_commit_list()
             self._update_range_hint()
+            self._update_summary()
 
         else:
             # Simple mode: no date options, single centered column but still big
             content.columnconfigure(0, weight=1)
             content.rowconfigure(0, weight=1)
 
-            single = ttk.LabelFrame(content, text="Select number", padding=16, style="Dialog.TLabelframe")
-            single.grid(row=0, column=0, sticky="nsew", padx=40)
+            single = ttk.LabelFrame(content, text="Select number", padding=_px(16), style="Dialog.TLabelframe")
+            single.grid(row=0, column=0, sticky="nsew", padx=_px(40))
             single.columnconfigure(0, weight=1)
 
             self.value_var = tk.StringVar(value="0")
@@ -277,8 +346,8 @@ class NumericKeypadDialog(tk.Toplevel):
             display = tk.Entry(
                 single,
                 textvariable=self.value_var,
-                font=("Helvetica", 18, "bold"),
-                width=20,
+                font=_font("Helvetica", 18, "bold"),
+                width=_px(20),
                 justify=tk.CENTER,
                 state="readonly",
                 bg=entry_bg,
@@ -288,10 +357,10 @@ class NumericKeypadDialog(tk.Toplevel):
                 relief=tk.SOLID,
                 bd=1,
             )
-            display.grid(row=0, column=0, pady=(8, 14), sticky="ew")
+            display.grid(row=0, column=0, pady=(_px(8), _px(14)), sticky="ew")
 
             keypad_frame = ttk.Frame(single, style="Dialog.TFrame")
-            keypad_frame.grid(row=1, column=0, pady=6)
+            keypad_frame.grid(row=1, column=0, pady=_px(6))
 
             buttons = [
                 ["7", "8", "9"],
@@ -302,34 +371,36 @@ class NumericKeypadDialog(tk.Toplevel):
 
             for r, row in enumerate(buttons):
                 row_frame = ttk.Frame(keypad_frame, style="Dialog.TFrame")
-                row_frame.grid(row=r, column=0, pady=3)
+                row_frame.grid(row=r, column=0, pady=_px(3))
                 for c, btn_text in enumerate(row):
-                    btn = ttk.Button(row_frame, text=btn_text, width=8, command=lambda t=btn_text: self._on_key(t))
-                    btn.grid(row=0, column=c, padx=5, pady=3, ipadx=4, ipady=10)
+                    btn = ttk.Button(row_frame, text=btn_text, width=_px(8), command=lambda t=btn_text: self._on_key(t))
+                    btn.grid(row=0, column=c, padx=_px(5), pady=_px(3), ipadx=_px(4), ipady=_px(10))
+
+        # Live summary line (spans full width, above buttons)
+        self.summary_label: Optional[ttk.Label] = None
+        if self.show_date_options:
+            self.summary_var = tk.StringVar(value="")
+            self.summary_label = ttk.Label(
+                self,
+                textvariable=self.summary_var,
+                font=_font("Helvetica", 10, "bold"),
+                justify=tk.CENTER,
+                style="Dialog.TLabel",
+                wraplength=_px(860),
+            )
+            self.summary_label.pack(pady=(_px(4), _px(2)), padx=_px(20), fill=tk.X)
 
         # OK and Cancel buttons - bottom, centered, bigger
         button_frame = ttk.Frame(self, style="Dialog.TFrame")
-        button_frame.pack(pady=16, fill=tk.X)
+        button_frame.pack(pady=_px(16), fill=tk.X)
         inner_btn = ttk.Frame(button_frame, style="Dialog.TFrame")
         inner_btn.pack(anchor=tk.CENTER)
-        ok_btn = ttk.Button(inner_btn, text="OK", command=self._on_ok, style="Dialog.TButton", width=12)
-        ok_btn.pack(side=tk.LEFT, padx=8, ipady=4)
-        cancel_btn = ttk.Button(inner_btn, text="Cancel", command=self._on_cancel, style="Dialog.TButton", width=12)
-        cancel_btn.pack(side=tk.LEFT, padx=8, ipady=4)
+        ok_btn = ttk.Button(inner_btn, text="OK", command=self._on_ok, style="Dialog.TButton", width=_px(12))
+        ok_btn.pack(side=tk.LEFT, padx=_px(8), ipady=_px(4))
+        cancel_btn = ttk.Button(inner_btn, text="Cancel", command=self._on_cancel, style="Dialog.TButton", width=_px(12))
+        cancel_btn.pack(side=tk.LEFT, padx=_px(8), ipady=_px(4))
 
         # Bind keyboard events
-        self.bind("<Key-0>", lambda e: self._on_key("0"))
-        self.bind("<Key-1>", lambda e: self._on_key("1"))
-        self.bind("<Key-2>", lambda e: self._on_key("2"))
-        self.bind("<Key-3>", lambda e: self._on_key("3"))
-        self.bind("<Key-4>", lambda e: self._on_key("4"))
-        self.bind("<Key-5>", lambda e: self._on_key("5"))
-        self.bind("<Key-6>", lambda e: self._on_key("6"))
-        self.bind("<Key-7>", lambda e: self._on_key("7"))
-        self.bind("<Key-8>", lambda e: self._on_key("8"))
-        self.bind("<Key-9>", lambda e: self._on_key("9"))
-        self.bind("<BackSpace>", lambda e: self._on_key("⌫"))
-        self.bind("<Delete>", lambda e: self._on_key("C"))
         self.bind("<Return>", lambda e: self._on_ok())
         self.bind("<Escape>", lambda e: self._on_cancel())
 
@@ -339,8 +410,8 @@ class NumericKeypadDialog(tk.Toplevel):
         if self.show_date_options:
             cur_w = self.winfo_width()
             cur_h = self.winfo_height()
-            target_w = max(cur_w, 880)
-            target_h = max(cur_h, 560)
+            target_w = max(cur_w, _px(920))
+            target_h = max(cur_h, _px(600))
             self.geometry(f"{target_w}x{target_h}")
             self.update_idletasks()
         x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_width() // 2)
@@ -455,6 +526,105 @@ class NumericKeypadDialog(tk.Toplevel):
             self._set_custom_entries_state(tk.DISABLED)
             self._set_range_entries_state(tk.DISABLED)
             self._update_date_panels()
+        self._update_summary()
+
+    def _selected_count(self) -> int:
+        """Return the clamped commit count from the count field."""
+        try:
+            value = int(self.value_var.get())
+        except (ValueError, tk.TclError, AttributeError):
+            return 0
+        return max(0, min(value, len(self.commit_items) if self.commit_items else self.maxvalue))
+
+    def _on_slide(self, val: str) -> None:
+        """Slider moved: push the value into the count field."""
+        if self._syncing_scale:
+            return
+        try:
+            self.value_var.set(str(int(float(val))))
+        except (ValueError, tk.TclError):
+            pass
+
+    def _sync_scale(self) -> None:
+        """Move the slider to match the count field (guarded, no loops)."""
+        if not hasattr(self, "count_scale"):
+            return
+        try:
+            target = int(self.value_var.get())
+        except (ValueError, tk.TclError, AttributeError):
+            return
+        target = max(self.minvalue, min(target, self.maxvalue))
+        try:
+            if int(float(self.count_scale.get())) == target:
+                return
+        except (ValueError, tk.TclError):
+            return
+        self._syncing_scale = True
+        try:
+            self.count_scale.set(target)
+        finally:
+            self._syncing_scale = False
+
+    def _on_list_click(self, event: tk.Event) -> None:
+        """Clicking row i selects the first i+1 commits."""
+        try:
+            idx = self.commit_listbox.nearest(event.y)
+            if idx < 0 or idx >= self.commit_listbox.size():
+                return
+            bbox = self.commit_listbox.bbox(idx)
+            if bbox is None or event.y > bbox[1] + bbox[3]:
+                return  # clicked empty space below the rows
+            self.value_var.set(str(idx + 1))
+        except (tk.TclError, AttributeError):
+            pass
+
+    def _on_select_all(self) -> None:
+        """Select all pending commits."""
+        self.value_var.set(str(self.maxvalue))
+
+    def _refresh_live(self) -> None:
+        """Refresh commit list, slider, capacity hint and summary together."""
+        self._refresh_commit_list()
+        self._sync_scale()
+        self._update_range_hint()
+        self._update_summary()
+
+    def _refresh_commit_list(self) -> None:
+        """Show the first N pending commits (oldest first) in the listbox."""
+        if not hasattr(self, "commit_listbox"):
+            return
+        count = self._selected_count()
+        self.commit_listbox.delete(0, tk.END)
+        for i, item in enumerate(self.commit_items[:count]):
+            self.commit_listbox.insert(tk.END, f"{i + 1}. {item}")
+        total = len(self.commit_items)
+        if hasattr(self, "count_info_var"):
+            self.count_info_var.set(f"Showing first {count} of {total} pending commit(s).")
+
+    def _update_summary(self) -> None:
+        """Refresh the live plan summary line."""
+        if getattr(self, "summary_label", None) is None or self.date_mode_var is None:
+            return
+        count = self._selected_count()
+        mode = self.date_mode_var.get()
+        if mode == "custom":
+            date = self.custom_date_var.get().strip() if self.custom_date_var else ""
+            frm = self.custom_time_from_var.get().strip() if self.custom_time_from_var else ""
+            to = self.custom_time_to_var.get().strip() if self.custom_time_to_var else ""
+            text = f"{count} commit(s) → {date or '…'}, {frm or '…'}–{to or '…'}"
+        elif mode == "range":
+            cap = self._range_capacity()
+            if cap is not None:
+                days, lo_fit, hi_fit = cap
+                text = f"{count} commit(s) → {days} day(s), fits {lo_fit}–{hi_fit}"
+            else:
+                text = f"{count} commit(s) → …"
+        else:
+            text = f"{count} commit(s) → today, current time"
+        try:
+            self.summary_var.set(text)
+        except (tk.TclError, AttributeError):
+            pass
 
     def _on_key(self, key: str) -> None:
         """Handle keypad button press."""
