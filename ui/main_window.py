@@ -43,6 +43,11 @@ class GitManagerGUI:
         self.output_font_size = self.db.get_output_font_size()
         self.table_font_size = self.db.get_table_font_size()
         self.button_font_size = self.db.get_button_font_size()
+        self.work_start_hour = self.db.get_work_start_hour()
+        self.work_end_hour = self.db.get_work_end_hour()
+        self.min_commits_per_day = self.db.get_min_commits_per_day()
+        self.max_commits_per_day = self.db.get_max_commits_per_day()
+        self.busy_workdays = self.db.get_busy_workdays()
         self.states: List[RepoState] = []
         self.auto_refresh_job: Optional[str] = None
         self.operation_in_progress = False
@@ -693,12 +698,17 @@ class GitManagerGUI:
             self.output_font_size,
             self.table_font_size,
             self.button_font_size,
+            self.work_start_hour,
+            self.work_end_hour,
+            self.min_commits_per_day,
+            self.max_commits_per_day,
+            self.busy_workdays,
         )
         self.root.wait_window(dialog)
         if dialog.result is None:
             return
 
-        new_base, auto_switch, theme_mode, auto_refresh_enabled, refresh_interval, output_font_size, table_font_size, button_font_size = dialog.result
+        new_base, auto_switch, theme_mode, auto_refresh_enabled, refresh_interval, output_font_size, table_font_size, button_font_size, work_start, work_end, min_per_day, max_per_day, busy_workdays = dialog.result
         self.base_var.set(new_base)
         self.auto_switch_to_local_commit = auto_switch
         self.auto_refresh_enabled = auto_refresh_enabled
@@ -707,6 +717,11 @@ class GitManagerGUI:
         self.output_font_size = output_font_size
         self.table_font_size = table_font_size
         self.button_font_size = button_font_size
+        self.work_start_hour = work_start
+        self.work_end_hour = work_end
+        self.min_commits_per_day = min_per_day
+        self.max_commits_per_day = max_per_day
+        self.busy_workdays = busy_workdays
         self.db.set_base_directory(new_base)
         self.db.set_auto_switch_local_commit(auto_switch)
         self.db.set_theme_mode(theme_mode)
@@ -715,6 +730,11 @@ class GitManagerGUI:
         self.db.set_output_font_size(output_font_size)
         self.db.set_table_font_size(table_font_size)
         self.db.set_button_font_size(button_font_size)
+        self.db.set_work_start_hour(work_start)
+        self.db.set_work_end_hour(work_end)
+        self.db.set_min_commits_per_day(min_per_day)
+        self.db.set_max_commits_per_day(max_per_day)
+        self.db.set_busy_workdays(busy_workdays)
 
         self.append_output(f"💾 Settings saved. Base directory: {new_base}\n")
         self.apply_theme(self.theme_mode)
@@ -1236,27 +1256,58 @@ class GitManagerGUI:
                 show_date_options=True,
                 last_commit_info=last_commit_info,
                 last_commit_iso=last_commit_iso,
+                work_start_hour=getattr(self, "work_start_hour", "09:00"),
+                work_end_hour=getattr(self, "work_end_hour", "18:00"),
+                min_commits_per_day=getattr(self, "min_commits_per_day", 1),
+                max_commits_per_day=getattr(self, "max_commits_per_day", 10),
             )
             self.root.wait_window(dialog)
             num = dialog.result
             if num is None:
                 return
-            # Determine commit date/time to use
-            if getattr(dialog, "date_mode", "current") == "custom" and getattr(dialog, "custom_iso", None):
-                iso_value = dialog.custom_iso  # already validated to be after last commit
-                self.append_output(f"📅 Using custom date/time: {iso_value} (after last commit {last_commit_iso or 'N/A'})\n")
+            # Determine per-commit date/times to use
+            from utils.time_utils import distribute_across_days, distribute_in_window
+            from utils.time_utils import is_after_last_commit as _is_after
+
+            date_mode = getattr(dialog, "date_mode", "current")
+            if date_mode == "custom" and getattr(dialog, "custom_iso", None):
+                custom_start = getattr(dialog, "custom_start_iso", None) or dialog.custom_iso
+                custom_end = getattr(dialog, "custom_end_iso", None) or dialog.custom_iso
+                commit_isos = distribute_in_window(custom_start, custom_end, num)
+                iso_value = commit_isos[0]
+                self.append_output(f"📅 Using custom date window: {custom_start} → {custom_end} ({num} commits, random times, order kept)\n")
+            elif date_mode == "range" and getattr(dialog, "range_start_iso", None) and getattr(dialog, "range_end_iso", None):
+                range_start_date = dialog.range_start_iso[:10]
+                range_end_date = dialog.range_end_iso[:10]
+                try:
+                    commit_isos = distribute_across_days(
+                        range_start_date,
+                        range_end_date,
+                        getattr(self, "work_start_hour", "09:00"),
+                        getattr(self, "work_end_hour", "18:00"),
+                        num,
+                        min_per_day=getattr(self, "min_commits_per_day", 0),
+                        max_per_day=getattr(self, "max_commits_per_day", None),
+                        busy_workdays=getattr(self, "busy_workdays", False),
+                    )
+                except ValueError as exc:
+                    raise GitManagerError(str(exc)) from exc
+                iso_value = commit_isos[0]
+                self.append_output(
+                    f"📅 Using date range: {range_start_date} → {range_end_date} "
+                    f"({num} commits across days, working hours {getattr(self, 'work_start_hour', '09:00')}-{getattr(self, 'work_end_hour', '18:00')})\n"
+                )
             else:
                 iso_value = now_iso()
+                commit_isos = [iso_value] * num
                 if last_commit_iso:
                     self.append_output(f"📅 Using current date/time: {iso_value}\n")
-            # Extra safety: ensure chosen date is after last commit even if dialog validation was bypassed
+            # Extra safety: ensure chosen dates are after last commit even if dialog validation was bypassed
             if last_commit_iso:
                 try:
-                    from utils.time_utils import is_after_last_commit as _is_after
-
-                    if not _is_after(iso_value, last_commit_iso):
+                    if not _is_after(min(commit_isos), last_commit_iso):
                         raise GitManagerError(
-                            f"Chosen date/time {iso_value} must be after last commit on {base_branch} ({last_commit_iso}). "
+                            f"Chosen date/time {min(commit_isos)} must be after last commit on {base_branch} ({last_commit_iso}). "
                             f"Last commit info: {last_commit_info}"
                         )
                 except GitManagerError:
@@ -1264,11 +1315,11 @@ class GitManagerGUI:
                 except Exception:
                     pass
 
-            # Future commit warning
-            if is_future(iso_value):
+            # Future commit warning (check latest planned date)
+            if is_future(max(commit_isos)):
                 if not messagebox.askyesno(
                     "Future commit warning",
-                    f"Warning: This commit is for the future!\n\nSelected date: {iso_value}\nCurrent time: {now_display()}\n\nDo you want to continue?",
+                    f"Warning: Planned commits end in the future!\n\nLatest date: {max(commit_isos)}\nCurrent time: {now_display()}\n\nDo you want to continue?",
                     parent=self.root,
                 ):
                     self.append_output("⏭ Move cancelled — future date not confirmed.\n")
@@ -1310,16 +1361,14 @@ class GitManagerGUI:
             else:
                 start_ref = base_branch
 
-            # Re-validate iso against updated start_ref tip (remote may have moved)
+            # Re-validate isos against updated start_ref tip (remote may have moved)
             if start_ref != base_branch or last_commit_iso:
                 try:
                     updated_last_iso = GitOperations.run_git(["log", "-1", "--pretty=format:%aI", start_ref], cwd=repo).strip()
                     if updated_last_iso:
-                        from utils.time_utils import is_after_last_commit as _is_after2
-
-                        if not _is_after2(iso_value, updated_last_iso):
+                        if not _is_after(min(commit_isos), updated_last_iso):
                             raise GitManagerError(
-                                f"Chosen date/time {iso_value} must be after last commit on {start_ref} ({updated_last_iso})."
+                                f"Chosen date/time {min(commit_isos)} must be after last commit on {start_ref} ({updated_last_iso})."
                             )
                 except GitManagerError:
                     raise
@@ -1359,8 +1408,14 @@ class GitManagerGUI:
             temp_branch = f"tmp_git_manager_{datetime.now().strftime('%Y%m%d%H%M%S')}"
             GitOperations.run_git(["branch", temp_branch, base_before], cwd=repo)
             BranchManager.checkout(repo, temp_branch)
-            now_iso_value = iso_value  # current or custom, already validated
+            # Per-commit datetimes (single value repeated for current mode,
+            # distributed window/range otherwise). Index follows selection order
+            # so chronological order is preserved even if some commits are skipped.
+            commit_dates = list(commit_isos)
+            while len(commit_dates) < len(commits):
+                commit_dates.append(commit_dates[-1])
             for idx, commit in enumerate(commits):
+                commit_iso = commit_dates[idx]
                 remaining = len(commits) - idx - 1
                 subject = GitOperations.run_git(["show", "-s", "--format=%s", commit], cwd=repo).strip()
                 self.append_output(f"📌 Processing {idx + 1}/{len(commits)}: {commit[:7]} '{subject}' ({remaining} remaining)...\n")
@@ -1380,9 +1435,9 @@ class GitManagerGUI:
                             GitOperations.run_git(["add", "."], cwd=repo)
                             msg = GitOperations.run_git(["show", "-s", "--format=%B", commit], cwd=repo)
                             GitOperations.run_git_env(
-                                ["commit", "-m", msg, "--date", now_iso_value],
+                                ["commit", "-m", msg, "--date", commit_iso],
                                 cwd=repo,
-                                extra_env={"GIT_AUTHOR_DATE": now_iso_value, "GIT_COMMITTER_DATE": now_iso_value},
+                                extra_env={"GIT_AUTHOR_DATE": commit_iso, "GIT_COMMITTER_DATE": commit_iso},
                             )
                             self.append_output(f"✓ Resolved with ours for {commit[:7]}")
                             self.append_output(GitOperations.run_git(["show", "-s", "--date=iso", "--pretty=format:  ✔ %h  %ad  %an <%ae>"], cwd=repo) + "\n")
@@ -1394,9 +1449,9 @@ class GitManagerGUI:
                             GitOperations.run_git(["add", "."], cwd=repo)
                             msg = GitOperations.run_git(["show", "-s", "--format=%B", commit], cwd=repo)
                             GitOperations.run_git_env(
-                                ["commit", "-m", msg, "--date", now_iso_value],
+                                ["commit", "-m", msg, "--date", commit_iso],
                                 cwd=repo,
-                                extra_env={"GIT_AUTHOR_DATE": now_iso_value, "GIT_COMMITTER_DATE": now_iso_value},
+                                extra_env={"GIT_AUTHOR_DATE": commit_iso, "GIT_COMMITTER_DATE": commit_iso},
                             )
                             self.append_output(f"✓ Resolved with theirs for {commit[:7]}")
                             self.append_output(GitOperations.run_git(["show", "-s", "--date=iso", "--pretty=format:  ✔ %h  %ad  %an <%ae>"], cwd=repo) + "\n")
@@ -1426,9 +1481,9 @@ class GitManagerGUI:
 
                 message = GitOperations.run_git(["show", "-s", "--format=%B", commit], cwd=repo)
                 GitOperations.run_git_env(
-                    ["commit", "-m", message, "--date", now_iso_value],
+                    ["commit", "-m", message, "--date", commit_iso],
                     cwd=repo,
-                    extra_env={"GIT_AUTHOR_DATE": now_iso_value, "GIT_COMMITTER_DATE": now_iso_value},
+                    extra_env={"GIT_AUTHOR_DATE": commit_iso, "GIT_COMMITTER_DATE": commit_iso},
                 )
                 processed.append(commit)
                 self.append_output(GitOperations.run_git(["show", "-s", "--date=iso", "--pretty=format:  ✔ %h  %ad  %an <%ae>"], cwd=repo) + "\n")
@@ -1458,12 +1513,25 @@ class GitManagerGUI:
                         f"Remote default branch is '{remote_head}', but target is '{base_branch}'."
                     )
 
-            # 2) Ensure author date day equals chosen date's day for all moved commits
+            # 2) Ensure author dates match the chosen mode
             dates = GitOperations.run_git(["log", "-n", str(processed_count), temp_branch, "--date=short", "--pretty=format:%ad"], cwd=repo).splitlines()
-            expected_date_str = iso_value[:10]
-            bad_dates = [d for d in dates if d and d != expected_date_str]
-            if bad_dates:
-                raise GitManagerError(f"Found {len(bad_dates)} commit(s) with author date not equal to {expected_date_str}")
+            if date_mode == "range":
+                lo, hi = min(commit_isos)[:10], max(commit_isos)[:10]
+                bad_dates = [d for d in dates if d and not (lo <= d <= hi)]
+                if bad_dates:
+                    raise GitManagerError(f"Found {len(bad_dates)} commit(s) with author date outside {lo} → {hi}")
+                # Times must fall inside working hours
+                work_start = getattr(self, "work_start_hour", "09:00")
+                work_end = getattr(self, "work_end_hour", "18:00")
+                times = GitOperations.run_git(["log", "-n", str(processed_count), temp_branch, "--date=format:%H:%M", "--pretty=format:%ad"], cwd=repo).splitlines()
+                bad_times = [t for t in times if t and not (work_start <= t <= work_end)]
+                if bad_times:
+                    raise GitManagerError(f"Found {len(bad_times)} commit(s) with time outside working hours {work_start}-{work_end}")
+            else:
+                expected_date_str = iso_value[:10]
+                bad_dates = [d for d in dates if d and d != expected_date_str]
+                if bad_dates:
+                    raise GitManagerError(f"Found {len(bad_dates)} commit(s) with author date not equal to {expected_date_str}")
 
             # 3) Ensure author email matches local git config (so GitHub can attribute contributions)
             emails = GitOperations.run_git(["log", "-n", str(processed_count), temp_branch, "--pretty=format:%ae"], cwd=repo).splitlines()
@@ -1481,7 +1549,7 @@ class GitManagerGUI:
                 if self._is_no_internet_error(exc):
                     raise GitManagerError(f"{NO_INTERNET_MSG} — push failed: {str(exc)}") from exc
                 raise
-            self.append_output(f"✅ Done! {processed_count} commits moved with date/time {now_iso_value}\n")
+            self.append_output(f"✅ Done! {processed_count} commits moved ({min(commit_isos)} → {max(commit_isos)})\n")
 
             BranchManager.checkout(repo, base_branch)
             GitOperations.run_git(["reset", "--hard", temp_branch], cwd=repo)

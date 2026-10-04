@@ -165,6 +165,46 @@ class SettingsDB:
         """Save the button font size."""
         self.set("button_font_size", str(size))
 
+    def get_work_start_hour(self) -> str:
+        """Return the saved working-hours start (HH:MM)."""
+        return self.get("work_start_hour", default="09:00") or "09:00"
+
+    def set_work_start_hour(self, value: str) -> None:
+        """Save the working-hours start (HH:MM)."""
+        self.set("work_start_hour", value)
+
+    def get_work_end_hour(self) -> str:
+        """Return the saved working-hours end (HH:MM)."""
+        return self.get("work_end_hour", default="18:00") or "18:00"
+
+    def set_work_end_hour(self, value: str) -> None:
+        """Save the working-hours end (HH:MM)."""
+        self.set("work_end_hour", value)
+
+    def get_min_commits_per_day(self) -> int:
+        """Return the minimum commits per day for range distribution."""
+        return self.get_int("min_commits_per_day", 1)
+
+    def set_min_commits_per_day(self, value: int) -> None:
+        """Save the minimum commits per day."""
+        self.set("min_commits_per_day", str(max(0, int(value))))
+
+    def get_max_commits_per_day(self) -> int:
+        """Return the maximum commits per day for range distribution."""
+        return self.get_int("max_commits_per_day", 10)
+
+    def set_max_commits_per_day(self, value: int) -> None:
+        """Save the maximum commits per day."""
+        self.set("max_commits_per_day", str(max(1, int(value))))
+
+    def get_busy_workdays(self) -> bool:
+        """Return whether workdays (Mon–Fri) get more commits than weekends."""
+        return self.get("busy_workdays", default="0") == "1"
+
+    def set_busy_workdays(self, enabled: bool) -> None:
+        """Save the busy-workdays preference."""
+        self.set("busy_workdays", "1" if enabled else "0")
+
     # --- window / layout persistence -------------------------------------
 
     def get_window_geometry(self) -> Optional[str]:
