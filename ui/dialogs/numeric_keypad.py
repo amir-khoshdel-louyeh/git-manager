@@ -5,7 +5,7 @@ from __future__ import annotations
 import tkinter as tk
 from datetime import timedelta
 from tkinter import messagebox, ttk
-from typing import Optional
+from typing import Callable, Optional
 
 from utils.time_utils import (
     build_custom_iso,
@@ -73,6 +73,7 @@ class NumericKeypadDialog(tk.Toplevel):
         min_commits_per_day: int = 1,
         max_commits_per_day: int = 10,
         commit_items: Optional[list[str]] = None,
+        on_preview: Optional[Callable[[], None]] = None,
     ) -> None:
         super().__init__(parent)
         self.title(title)
@@ -104,6 +105,7 @@ class NumericKeypadDialog(tk.Toplevel):
         self.max_commits_per_day = max(1, int(max_commits_per_day))
         # Pending commits (oldest first), e.g. ["a1b2c3 Fix login", ...]
         self.commit_items: list[str] = list(commit_items or [])
+        self.on_preview: Optional[Callable[[], None]] = on_preview
 
         dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
         self.configure(bg=dialog_bg)
@@ -389,6 +391,17 @@ class NumericKeypadDialog(tk.Toplevel):
                 wraplength=_px(860),
             )
             self.summary_label.pack(pady=(_px(4), _px(2)), padx=_px(20), fill=tk.X)
+            if self.on_preview is not None:
+                preview_row = ttk.Frame(self, style="Dialog.TFrame")
+                preview_row.pack(pady=(0, _px(4)), fill=tk.X)
+                inner_preview = ttk.Frame(preview_row, style="Dialog.TFrame")
+                inner_preview.pack(anchor=tk.CENTER)
+                ttk.Button(
+                    inner_preview,
+                    text="👁 Preview on graph",
+                    command=self.on_preview,
+                    style="Dialog.TButton",
+                ).pack()
 
         # OK and Cancel buttons - bottom, centered, bigger
         button_frame = ttk.Frame(self, style="Dialog.TFrame")

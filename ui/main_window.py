@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 from pathlib import Path
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from core.branch_manager import BranchManager
 from core.git_config import GitConfig
@@ -15,7 +15,7 @@ from core.repo_scanner import RepoScanner
 from core.repo_state import RepoState
 from core.settings_db import SettingsDB
 from core.working_tree_manager import WorkingTreeManager
-from ui.dialogs import CommitDialog, ManageCommitsDialog, NumericKeypadDialog, PreviewModeDialog, ResetDialog, SettingsDialog
+from ui.dialogs import CommitDialog, ContributionsDialog, ManageCommitsDialog, NumericKeypadDialog, PreviewModeDialog, ResetDialog, SettingsDialog
 from ui.theme import apply_theme as apply_theme_style
 from utils.network import NO_INTERNET_MSG, has_internet_connection, is_network_error_message
 from utils.time_utils import is_future, now_display, now_iso
@@ -301,6 +301,7 @@ class GitManagerGUI:
         ttk.Button(buttons, text="👁 Preview Commits", command=self.action_preview, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
         ttk.Button(buttons, text="📝 Make a Commit", command=self.action_make_commit, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
         ttk.Button(buttons, text="🚀 Move Commits", command=self.action_move, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+        ttk.Button(buttons, text="📊 Contributions", command=self.action_contributions, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
         ttk.Button(buttons, text="🔁 Reset / Delete", command=self.action_reset, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
         ttk.Button(buttons, text="⚙️ Settings", command=self.action_settings, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
 
@@ -660,6 +661,106 @@ class GitManagerGUI:
         if idx < 0 or idx >= len(self.states):
             return None
         return self.states[idx]
+
+    def _contrib_repo_items(self) -> list[tuple[str, str]]:
+        """Return [(name, path)] for all known repositories."""
+        return [(state.name, str(state.path)) for state in self.states]
+
+    def _default_author_email(self) -> str:
+        """Best-guess author email: selected repo config, else global config."""
+        try:
+            state = None
+            sel = self.tree.selection()
+            if sel:
+                idx = int(sel[0])
+                if 0 <= idx < len(self.states):
+                    state = self.states[idx]
+            if state is not None:
+                email = GitOperations.run_git(["config", "user.email"], cwd=state.path).strip()
+                if email:
+                    return email
+        except GitManagerError:
+            pass
+        try:
+            email = GitOperations.run_git(["config", "--global", "user.email"], cwd=str(Path.home())).strip()
+            if email:
+                return email
+        except GitManagerError:
+            pass
+        return ""
+
+    def action_contributions(self) -> None:
+        if self.operation_in_progress:
+            messagebox.showerror(
+                "Operation in progress",
+                "Another operation is currently running. Please wait for it to finish before opening contributions.",
+                parent=self.root,
+            )
+            return
+        items = self._contrib_repo_items()
+        if not items:
+            messagebox.showinfo("No repositories", "No repositories to show.")
+            return
+        dialog = ContributionsDialog(
+            self.root,
+            items,
+            default_author=self._default_author_email(),
+            theme_mode=self.theme_mode,
+        )
+        self.root.wait_window(dialog)
+
+    def _open_move_preview(self, move_dialog) -> None:
+        """Open the contribution graph highlighting the move dialog's plan."""
+        from datetime import datetime as _dt
+
+        if move_dialog is None:
+            return
+        try:
+            count = int(move_dialog.value_var.get())
+        except (ValueError, AttributeError):
+            messagebox.showinfo("Preview", "Enter a valid commit count first.", parent=move_dialog)
+            return
+        mode = move_dialog.date_mode_var.get() if move_dialog.date_mode_var else "current"
+        highlight: dict[str, str] = {}
+        note = f"{count} planned commit(s)"
+        if mode == "custom":
+            day = (move_dialog.custom_date_var.get().strip() if move_dialog.custom_date_var else "")
+            try:
+                _dt.strptime(day, "%Y-%m-%d")
+            except ValueError:
+                messagebox.showinfo("Preview", "Enter a valid date (YYYY-MM-DD) first.", parent=move_dialog)
+                return
+            highlight[day] = note
+        elif mode == "range":
+            start = (move_dialog.range_start_date_var.get().strip() if move_dialog.range_start_date_var else "")
+            end = (move_dialog.range_end_date_var.get().strip() if move_dialog.range_end_date_var else "")
+            try:
+                d0 = _dt.strptime(start, "%Y-%m-%d").date()
+                d1 = _dt.strptime(end, "%Y-%m-%d").date()
+            except ValueError:
+                messagebox.showinfo("Preview", "Enter valid From/To dates first.", parent=move_dialog)
+                return
+            if d1 < d0:
+                messagebox.showinfo("Preview", "Range start must not be after range end.", parent=move_dialog)
+                return
+            day = d0
+            while day <= d1:
+                highlight[day.isoformat()] = note
+                day += timedelta(days=1)
+        else:
+            highlight[_dt.now().strftime("%Y-%m-%d")] = note
+        items = self._contrib_repo_items()
+        if not items:
+            messagebox.showinfo("No repositories", "No repositories to show.", parent=move_dialog)
+            return
+        dialog = ContributionsDialog(
+            move_dialog,
+            items,
+            default_author=self._default_author_email(),
+            theme_mode=self.theme_mode,
+            highlight=highlight,
+        )
+        move_dialog.wait_window(dialog)
 
     def action_change_base_directory(self) -> None:
         if not self._start_operation("change the base directory"):
@@ -1255,6 +1356,8 @@ class GitManagerGUI:
                 commit_items = []
 
             # Open window first for fast UI response
+            # (holder lets the preview callback reference the dialog itself)
+            _holder: dict[str, object] = {}
             dialog = NumericKeypadDialog(
                 self.root,
                 "Move commits",
@@ -1270,7 +1373,9 @@ class GitManagerGUI:
                 min_commits_per_day=getattr(self, "min_commits_per_day", 1),
                 max_commits_per_day=getattr(self, "max_commits_per_day", 10),
                 commit_items=commit_items,
+                on_preview=lambda: self._open_move_preview(_holder.get("dialog")),
             )
+            _holder["dialog"] = dialog
             self.root.wait_window(dialog)
             num = dialog.result
             if num is None:
