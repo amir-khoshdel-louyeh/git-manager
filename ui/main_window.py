@@ -16,6 +16,7 @@ from core.repo_state import RepoState
 from core.settings_db import SettingsDB
 from core.working_tree_manager import WorkingTreeManager
 from ui.dialogs import CommitDialog, ContributionsDialog, ManageCommitsDialog, NumericKeypadDialog, PreviewModeDialog, ResetDialog, SettingsDialog
+from ui.dialogs.geometry import enable_geometry_memory
 from ui.theme import apply_theme as apply_theme_style
 from utils.network import NO_INTERNET_MSG, has_internet_connection, is_network_error_message
 from utils.time_utils import is_future, now_display, now_iso
@@ -706,8 +707,10 @@ class GitManagerGUI:
             items,
             default_author=self._default_author_email(),
             theme_mode=self.theme_mode,
+            initial_zoom=self.db.get_contrib_zoom(),
         )
         self.root.wait_window(dialog)
+        self.db.set_contrib_zoom(dialog.zoom)
 
     def _open_move_preview(self, move_dialog) -> None:
         """Open the contribution graph highlighting the move dialog's plan."""
@@ -759,8 +762,10 @@ class GitManagerGUI:
             default_author=self._default_author_email(),
             theme_mode=self.theme_mode,
             highlight=highlight,
+            initial_zoom=self.db.get_contrib_zoom(),
         )
         move_dialog.wait_window(dialog)
+        self.db.set_contrib_zoom(dialog.zoom)
 
     def action_change_base_directory(self) -> None:
         if not self._start_operation("change the base directory"):
@@ -805,6 +810,7 @@ class GitManagerGUI:
             self.max_commits_per_day,
             self.busy_workdays,
         )
+        enable_geometry_memory(dialog, self.db, "settings")
         self.root.wait_window(dialog)
         if dialog.result is None:
             return
@@ -936,6 +942,7 @@ class GitManagerGUI:
 
         try:
             dialog = PreviewModeDialog(self.root, self.theme_mode)
+            enable_geometry_memory(dialog, self.db, "preview")
             self.root.wait_window(dialog)
             if dialog.result is None:
                 return
@@ -1051,6 +1058,7 @@ class GitManagerGUI:
                 state.commit_count,
                 self.theme_mode,
             )
+            enable_geometry_memory(dialog, self.db, "manage")
             self.root.wait_window(dialog)
             if dialog.result is None:
                 return
@@ -1217,6 +1225,7 @@ class GitManagerGUI:
                 return
 
             dialog = CommitDialog(self.root, state.name, self.theme_mode)
+            enable_geometry_memory(dialog, self.db, "commit")
             self.root.wait_window(dialog)
             if dialog.result is None:
                 return
@@ -1376,6 +1385,7 @@ class GitManagerGUI:
                 on_preview=lambda: self._open_move_preview(_holder.get("dialog")),
             )
             _holder["dialog"] = dialog
+            enable_geometry_memory(dialog, self.db, "move")
             self.root.wait_window(dialog)
             num = dialog.result
             if num is None:

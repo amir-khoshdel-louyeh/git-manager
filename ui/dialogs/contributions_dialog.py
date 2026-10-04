@@ -44,6 +44,7 @@ class ContributionsDialog(tk.Toplevel):
         default_author: str = "",
         theme_mode: str = "light",
         highlight: Optional[dict[str, str]] = None,
+        initial_zoom: float = 2.0,
     ) -> None:
         super().__init__(parent)
         self._parent = parent
@@ -54,7 +55,10 @@ class ContributionsDialog(tk.Toplevel):
         self.theme_mode = theme_mode
         self.repo_map: dict[str, str] = {name: path for name, path in repo_items}
         self.highlight: dict[str, str] = dict(highlight or {})
-        self.zoom: float = ZOOM_DEFAULT
+        try:
+            self.zoom: float = min(6.0, max(0.5, float(initial_zoom)))
+        except (ValueError, TypeError):
+            self.zoom = 2.0
         self._columns: list = []
 
         dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"

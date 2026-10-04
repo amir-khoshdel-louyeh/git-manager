@@ -205,6 +205,31 @@ class SettingsDB:
         """Save the busy-workdays preference."""
         self.set("busy_workdays", "1" if enabled else "0")
 
+    # --- dialog geometry memory ------------------------------------------
+
+    def get_dialog_geometry(self, name: str) -> Optional[str]:
+        """Return saved geometry string (WxH+X+Y) for a named dialog."""
+        return self.get(f"dialog_geometry_{name}")
+
+    def set_dialog_geometry(self, name: str, geometry: str) -> None:
+        """Save geometry string (WxH+X+Y) for a named dialog."""
+        self.set(f"dialog_geometry_{name}", geometry)
+
+    def get_contrib_zoom(self) -> float:
+        """Return the saved contributions-graph zoom factor."""
+        try:
+            return min(6.0, max(0.5, float(self.get("contrib_zoom", default="2.0") or "2.0")))
+        except (ValueError, TypeError):
+            return 2.0
+
+    def set_contrib_zoom(self, zoom: float) -> None:
+        """Save the contributions-graph zoom factor."""
+        try:
+            value = min(6.0, max(0.5, float(zoom)))
+        except (ValueError, TypeError):
+            value = 2.0
+        self.set("contrib_zoom", str(round(value, 2)))
+
     # --- window / layout persistence -------------------------------------
 
     def get_window_geometry(self) -> Optional[str]:
