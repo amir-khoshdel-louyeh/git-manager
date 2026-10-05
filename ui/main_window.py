@@ -16,6 +16,7 @@ from core.repo_state import RepoState
 from core.settings_db import SettingsDB
 from core.working_tree_manager import WorkingTreeManager
 from ui.dialogs import CommitDialog, ContributionsDialog, ManageCommitsDialog, NumericKeypadDialog, PreviewModeDialog, ResetDialog, SettingsDialog
+from ui.dialogs.autoscale import enable_autoscale
 from ui.dialogs.geometry import enable_geometry_memory
 from ui.theme import apply_theme as apply_theme_style
 from utils.network import NO_INTERNET_MSG, has_internet_connection, is_network_error_message
@@ -811,6 +812,7 @@ class GitManagerGUI:
             self.busy_workdays,
         )
         enable_geometry_memory(dialog, self.db, "settings")
+        enable_autoscale(dialog)
         self.root.wait_window(dialog)
         if dialog.result is None:
             return
@@ -943,6 +945,7 @@ class GitManagerGUI:
         try:
             dialog = PreviewModeDialog(self.root, self.theme_mode)
             enable_geometry_memory(dialog, self.db, "preview")
+            enable_autoscale(dialog)
             self.root.wait_window(dialog)
             if dialog.result is None:
                 return
@@ -1059,6 +1062,7 @@ class GitManagerGUI:
                 self.theme_mode,
             )
             enable_geometry_memory(dialog, self.db, "manage")
+            enable_autoscale(dialog)
             self.root.wait_window(dialog)
             if dialog.result is None:
                 return
@@ -1226,6 +1230,7 @@ class GitManagerGUI:
 
             dialog = CommitDialog(self.root, state.name, self.theme_mode)
             enable_geometry_memory(dialog, self.db, "commit")
+            enable_autoscale(dialog)
             self.root.wait_window(dialog)
             if dialog.result is None:
                 return
@@ -1386,6 +1391,7 @@ class GitManagerGUI:
             )
             _holder["dialog"] = dialog
             enable_geometry_memory(dialog, self.db, "move")
+            enable_autoscale(dialog)
             self.root.wait_window(dialog)
             num = dialog.result
             if num is None:

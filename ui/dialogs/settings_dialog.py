@@ -29,7 +29,7 @@ class SettingsDialog(tk.Toplevel):
     ) -> None:
         super().__init__(parent)
         self.title("Settings")
-        self.resizable(False, False)
+        self.resizable(True, True)
         self.result: Optional[tuple[str, bool, str, bool, int, int, int, int, str, str, int, int, bool]] = None
         self.theme_mode = theme_mode
 

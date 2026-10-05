@@ -13,7 +13,7 @@ class PreviewModeDialog(tk.Toplevel):
     def __init__(self, parent: tk.Tk, theme_mode: str = "light") -> None:
         super().__init__(parent)
         self.title("Preview Commits")
-        self.resizable(False, False)
+        self.resizable(True, True)
         self.result: Optional[str] = None
         self.theme_mode = theme_mode
 

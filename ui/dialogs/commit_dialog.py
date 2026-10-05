@@ -15,7 +15,7 @@ class CommitDialog(tk.Toplevel):
     def __init__(self, parent: tk.Tk, repo_name: str, theme_mode: str = "light") -> None:
         super().__init__(parent)
         self.title(f"Make a Commit - {repo_name}")
-        self.resizable(False, False)
+        self.resizable(True, True)
         self.result: Optional[tuple[str, str, str, str, Optional[str]]] = None
         self.theme_mode = theme_mode
         self.date_mode: str = "current"
