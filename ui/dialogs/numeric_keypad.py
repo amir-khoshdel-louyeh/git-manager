@@ -197,7 +197,10 @@ class NumericKeypadDialog(tk.Toplevel):
                 repo_scroll.grid(row=0, column=1, sticky="ns")
                 self.repo_listbox.configure(yscrollcommand=repo_scroll.set)
                 for option in self.repo_options:
-                    self.repo_listbox.insert(tk.END, f"{option.get('name')} ({option.get('pending')})")
+                    if option.get("path"):
+                        self.repo_listbox.insert(tk.END, f"{option.get('name')} ({option.get('pending')})")
+                    else:
+                        self.repo_listbox.insert(tk.END, option.get("name"))
                 self.repo_listbox.selection_set(self._repo_index)
                 self.repo_listbox.see(self._repo_index)
                 self.repo_listbox.bind("<<ListboxSelect>>", self._on_repo_select)
@@ -559,6 +562,8 @@ class NumericKeypadDialog(tk.Toplevel):
     @staticmethod
     def _prompt_for(opt: dict) -> str:
         """Prompt line for one repository option (count info is enough)."""
+        if not opt.get("path"):
+            return "Select a repository to move its commits."
         return (
             f"How many commits to move to {opt.get('base_branch')}?\n"
             f"(1 to {opt.get('pending')})"
@@ -615,11 +620,16 @@ class NumericKeypadDialog(tk.Toplevel):
         if getattr(self, "info_text_var", None) is not None:
             try:
                 info = self.last_commit_info
-                self.info_text_var.set(
-                    info if info else "No prior commits on base (first commit). Any date is allowed."
-                )
-                if getattr(self, "info_hint_var", None) is not None:
-                    self.info_hint_var.set("Chosen date must be after this commit." if info else "")
+                if not opt.get("path"):
+                    self.info_text_var.set("No repository selected — pick one from the list above.")
+                    if getattr(self, "info_hint_var", None) is not None:
+                        self.info_hint_var.set("")
+                else:
+                    self.info_text_var.set(
+                        info if info else "No prior commits on base (first commit). Any date is allowed."
+                    )
+                    if getattr(self, "info_hint_var", None) is not None:
+                        self.info_hint_var.set("Chosen date must be after this commit." if info else "")
             except (tk.TclError, AttributeError):
                 pass
         # Date defaults follow the new repo's tip commit.
@@ -847,8 +857,10 @@ class NumericKeypadDialog(tk.Toplevel):
         """Planned commit days {YYYY-MM-DD: note} for the embedded graph.
 
         Same mapping as the "Preview on graph" button but silent: invalid
-        input simply yields no highlight instead of popups.
+        input simply yields no highlight instead of popups. Days on/before
+        the picked repo's last commit are dropped (unavailable).
         """
+        from datetime import date as _date
         from datetime import datetime as _dt
 
         try:
@@ -862,14 +874,15 @@ class NumericKeypadDialog(tk.Toplevel):
             mode = self.date_mode_var.get()
         except (tk.TclError, AttributeError):
             return {}
+        result: dict[str, str] = {}
         if mode == "custom":
             try:
                 day = (self.custom_date_var.get().strip() if self.custom_date_var else "")
                 _dt.strptime(day, "%Y-%m-%d")
             except (ValueError, AttributeError):
                 return {}
-            return {day: note}
-        if mode == "range":
+            result = {day: note}
+        elif mode == "range":
             try:
                 start = (self.range_start_date_var.get().strip() if self.range_start_date_var else "")
                 end = (self.range_end_date_var.get().strip() if self.range_end_date_var else "")
@@ -879,13 +892,19 @@ class NumericKeypadDialog(tk.Toplevel):
                 return {}
             if d1 < d0:
                 return {}
-            out: dict[str, str] = {}
             day_d = d0
             while day_d <= d1:
-                out[day_d.isoformat()] = note
+                result[day_d.isoformat()] = note
                 day_d += timedelta(days=1)
-            return out
-        return {_dt.now().strftime("%Y-%m-%d"): note}
+        else:
+            result = {_dt.now().strftime("%Y-%m-%d"): note}
+        try:
+            if self.last_commit_iso:
+                cut = _date.fromisoformat(str(self.last_commit_iso)[:10])
+                result = {day: text for day, text in result.items() if _date.fromisoformat(day) >= cut}
+        except (ValueError, AttributeError):
+            pass
+        return result
 
     def _schedule_graph_refresh(self) -> None:
         """Debounced reload of the embedded contribution graph."""
@@ -913,19 +932,30 @@ class NumericKeypadDialog(tk.Toplevel):
                 return
         except tk.TclError:
             return
-        repo_path = ""
-        repo_name = ""
+        paths: list = []
+        cutoff: Optional[str] = None
         if self.repo_options:
+            # The table always aggregates every repository; the picked repo
+            # only sets the cutoff for the shade overlay.
+            none_opt = self.repo_options[0]
+            paths = list(none_opt.get("all_paths") or
+                         [c.get("path") for c in self.repo_options if c.get("path")])
             opt = self.repo_options[self._repo_index]
-            repo_path = opt.get("path", "")
-            repo_name = opt.get("name", "")
+            if opt.get("path"):
+                cutoff = opt.get("last_commit_iso")
         if getattr(self, "graph_frame", None) is not None:
             try:
-                self.graph_frame.configure(text=f"Contributions — {repo_name}" if repo_name else "Contributions")
+                if not self.repo_options:
+                    title = "Contributions"
+                else:
+                    picked = self.repo_options[self._repo_index]
+                    title = (f"Contributions — {picked.get('name')}" if picked.get("path")
+                             else "Contributions — all repositories")
+                self.graph_frame.configure(text=title)
             except (tk.TclError, AttributeError):
                 pass
         try:
-            graph.set_data(repo_path, self.graph_author or None, self._planned_highlight())
+            graph.set_data(paths, self.graph_author or None, self._planned_highlight(), cutoff)
         except Exception:
             pass
 
@@ -954,6 +984,10 @@ class NumericKeypadDialog(tk.Toplevel):
 
     def _on_ok(self) -> None:
         """Handle OK button."""
+        # NONE is for browsing only — a real repository is needed to move.
+        if self.repo_options and not (self.selected_repo or {}).get("path"):
+            messagebox.showinfo("Select repository", "Please select a repository from the list first.", parent=self)
+            return
         # Validate number first
         try:
             value = int(self.value_var.get())

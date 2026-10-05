@@ -9,6 +9,7 @@ Contributions dialog is intentionally left untouched.
 from __future__ import annotations
 
 import tkinter as tk
+from datetime import date as _date
 from pathlib import Path
 from tkinter import ttk
 from typing import Optional
@@ -19,12 +20,26 @@ _CELL = 14
 _GAP = 4
 _LEFT_PAD = 36
 _TOP_PAD = 26
+#: Shade drawn OVER unavailable days (the table underneath stays intact).
+#: Stipple dithers the shade so the contribution colors show through.
+_SHADE_FILL = "#808080"
+_SHADE_STIPPLE = "gray50"
 
 ZOOM_MIN = 0.5
 ZOOM_MAX = 3.0
 # Viewport caps so big zooms stay usable; scrollbars take over past them.
 _MAX_W = 1200
 _MAX_H = 240
+
+
+def _parse_day(value: object) -> _date | None:
+    """Return the calendar day of an ISO timestamp, or None when unreadable."""
+    if not value:
+        return None
+    try:
+        return _date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
 
 
 class ContributionGraph(ttk.Frame):
@@ -38,6 +53,7 @@ class ContributionGraph(ttk.Frame):
         except (ValueError, TypeError):
             self.zoom = 1.0
         self.highlight: dict[str, str] = {}
+        self.cutoff: _date | None = None
         self.total: int = 0
         self._columns: list = []
         self._cells: list[list[dict]] = []
@@ -84,14 +100,25 @@ class ContributionGraph(ttk.Frame):
     # ------------------------------------------------------------------ data
     def set_data(
         self,
-        repo_path: str | Path | None,
+        repo_paths: str | Path | list[str | Path] | None,
         author_email: Optional[str] = None,
         highlight: Optional[dict[str, str]] = None,
+        cutoff_iso: Optional[str] = None,
     ) -> int:
-        """Reload counts for one repo and redraw. Returns the total count."""
+        """Reload counts for one repo (or several) and redraw.
+
+        Days strictly before ``cutoff_iso``'s day render gray (unavailable —
+        e.g. before the picked repo's last commit). Returns the total count.
+        """
         self.highlight = dict(highlight or {})
+        self.cutoff = _parse_day(cutoff_iso)
         try:
-            paths = [Path(repo_path)] if repo_path else []
+            if not repo_paths:
+                paths: list[Path] = []
+            elif isinstance(repo_paths, (str, Path)):
+                paths = [Path(repo_paths)]
+            else:
+                paths = [Path(p) for p in repo_paths]
             counts = collect_counts(paths, author_email=author_email)
         except Exception:
             counts = {}
@@ -137,12 +164,18 @@ class ContributionGraph(ttk.Frame):
         last_month_col = -10
         outline = "#e3b341" if dark else "#bf8700"
         pad = max(1, round(self.zoom / 2))
+        shaded: list[tuple[int, int]] = []
         for col_idx, column in enumerate(columns):
             col_meta: list[dict] = []
             for row_idx, cell_obj in enumerate(column):
                 x0 = left + col_idx * step
                 y0 = top + row_idx * step
+                unavailable = bool(
+                    cell_obj.in_range and self.cutoff is not None and cell_obj.day < self.cutoff
+                )
                 if cell_obj.in_range:
+                    # The main table is always drawn whole; unavailable days
+                    # only get a shade overlaid afterwards.
                     fill = colors[cell_obj.level]
                     self.canvas.create_rectangle(x0, y0, x0 + cell, y0 + cell, fill=fill, outline=fill)
                     note = self.highlight.get(cell_obj.day.isoformat())
@@ -151,8 +184,11 @@ class ContributionGraph(ttk.Frame):
                             x0 - pad, y0 - pad, x0 + cell + pad, y0 + cell + pad,
                             fill="", outline=outline, width=m["outline"],
                         )
+                    if unavailable:
+                        shaded.append((x0, y0))
                 col_meta.append({"day": cell_obj.day, "count": cell_obj.count, "in_range": cell_obj.in_range,
-                                 "note": self.highlight.get(cell_obj.day.isoformat())})
+                                 "note": self.highlight.get(cell_obj.day.isoformat()),
+                                 "unavailable": unavailable})
                 if col_idx == 0 and row_idx in (1, 3, 5):
                     names = {1: "Mon", 3: "Wed", 5: "Fri"}
                     self.canvas.create_text(
@@ -168,6 +204,12 @@ class ContributionGraph(ttk.Frame):
                 )
                 last_month_col = col_idx
             self._cells.append(col_meta)
+        # Shade over unavailable days (dithered: the table shows through).
+        for x0, y0 in shaded:
+            self.canvas.create_rectangle(
+                x0, y0, x0 + cell, y0 + cell,
+                fill=_SHADE_FILL, outline="", stipple=_SHADE_STIPPLE,
+            )
         graph_w = left + 53 * step + m["pad"]
         graph_h = top + 7 * step + m["pad"]
         self.canvas.configure(scrollregion=(0, 0, graph_w, graph_h))
@@ -192,7 +234,9 @@ class ContributionGraph(ttk.Frame):
                     text = f"1 contribution on {label}"
                 else:
                     text = f"{meta['count']} contributions on {label}"
-                if meta["note"]:
+                if meta["unavailable"]:
+                    text += " — unavailable (before last commit)"
+                elif meta["note"]:
                     text += f" — {meta['note']}"
                 self.status_var.set(text)
                 return
@@ -200,8 +244,10 @@ class ContributionGraph(ttk.Frame):
 
     def _set_status_default(self) -> None:
         base = f"{self.total} contributions in the last year. Hover a day for details."
+        if self.cutoff is not None:
+            base = f"{self.total} contributions in the last year. Shaded days are before the last commit."
         if self.highlight:
-            base = f"{self.total} contributions in the last year. Gold outline = planned."
+            base += " Gold outline = planned."
         try:
             self.status_var.set(base)
         except (tk.TclError, AttributeError):

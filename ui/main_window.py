@@ -1397,6 +1397,21 @@ class GitManagerGUI:
                 )
             except GitManagerError:
                 continue
+        if candidates:
+            # NONE browses every repo's contributions; always first + default.
+            candidates.insert(
+                0,
+                {
+                    "name": "NONE",
+                    "path": "",
+                    "base_branch": "",
+                    "pending": 0,
+                    "commit_items": [],
+                    "last_commit_info": None,
+                    "last_commit_iso": None,
+                    "all_paths": [c["path"] for c in candidates],
+                },
+            )
         return candidates
 
     def _move_single_repo(self) -> bool:
@@ -1408,20 +1423,8 @@ class GitManagerGUI:
         if not candidates:
             messagebox.showinfo("No commits", "No commits to move.")
             return False
-        # Preselect the tree selection when it has pending commits.
+        # NONE is the first entry and always the default.
         selected_index = 0
-        try:
-            sel = self.tree.selection()
-            if sel:
-                idx = int(sel[0])
-                if 0 <= idx < len(self.states):
-                    wanted = str(self.states[idx].path)
-                    for i, cand in enumerate(candidates):
-                        if cand["path"] == wanted:
-                            selected_index = i
-                            break
-        except (ValueError, tk.TclError, IndexError):
-            pass
         temp_branch: str | None = None
         base_before: str | None = None
         local_before: str | None = None
@@ -1458,6 +1461,8 @@ class GitManagerGUI:
             if num is None:
                 return False
             opt = dialog.selected_repo or candidates[selected_index]
+            if not opt.get("path"):
+                return False  # NONE is browse-only; OK already blocks it
             repo = Path(opt["path"])
             base_branch = opt["base_branch"]
             repo_name = opt["name"]
