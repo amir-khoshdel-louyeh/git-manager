@@ -15,6 +15,7 @@ from utils.time_utils import (
     now_time_str,
     parse_iso_to_dt,
 )
+from ui.dialogs.contribution_graph import ContributionGraph
 
 
 def suggest_date_after(last_commit_iso: Optional[str]) -> str:
@@ -84,6 +85,7 @@ class NumericKeypadDialog(tk.Toplevel):
         on_preview: Optional[Callable[[], None]] = None,
         repo_options: Optional[list[dict]] = None,
         selected_index: int = 0,
+        graph_author: str = "",
     ) -> None:
         super().__init__(parent)
         self.title(title)
@@ -133,6 +135,11 @@ class NumericKeypadDialog(tk.Toplevel):
         self.selected_repo: Optional[dict] = (
             self.repo_options[self._repo_index] if self.repo_options else None
         )
+        # Embedded contribution graph (bottom of the Move dialog).
+        self.graph_author: str = graph_author or ""
+        self.graph: Optional[ContributionGraph] = None
+        self.graph_frame: Optional[ttk.LabelFrame] = None
+        self._graph_job: Optional[str] = None
 
         dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
         self.configure(bg=dialog_bg)
@@ -469,6 +476,21 @@ class NumericKeypadDialog(tk.Toplevel):
                     btn = ttk.Button(row_frame, text=btn_text, width=_px(8), command=lambda t=btn_text: self._on_key(t))
                     btn.grid(row=0, column=c, padx=_px(5), pady=_px(3), ipadx=_px(4), ipady=_px(10))
 
+        # ---------- embedded contributions graph (bottom) ----------
+        if self.show_date_options:
+            self.graph_frame = ttk.LabelFrame(self, text="Contributions", padding=_px(10), style="Dialog.TLabelframe")
+            self.graph_frame.pack(fill=tk.X, padx=_px(20), pady=(_px(4), _px(2)))
+            self.graph = ContributionGraph(self.graph_frame, theme_mode=theme_mode, initial_zoom=1.0)
+            self.graph.pack(fill=tk.X)
+            if self.repo_options:
+                try:
+                    self.graph_frame.configure(
+                        text=f"Contributions — {self.repo_options[self._repo_index].get('name')}"
+                    )
+                except (tk.TclError, AttributeError):
+                    pass
+            self._refresh_graph()
+
         # Live summary line (spans full width, above buttons)
         self.summary_label: Optional[ttk.Label] = None
         if self.show_date_options:
@@ -610,6 +632,13 @@ class NumericKeypadDialog(tk.Toplevel):
                 self.range_end_date_var.set(suggest_date_after(self.last_commit_iso))
         except (tk.TclError, AttributeError):
             pass
+        # Embedded graph follows the newly picked repository.
+        if getattr(self, "graph_frame", None) is not None:
+            try:
+                self.graph_frame.configure(text=f"Contributions — {opt.get('name')}")
+            except (tk.TclError, AttributeError):
+                pass
+        self._schedule_graph_refresh()
 
     def _set_range_entries_state(self, state: str) -> None:
         if hasattr(self, "range_start_entry"):
@@ -774,6 +803,7 @@ class NumericKeypadDialog(tk.Toplevel):
         self._sync_scale()
         self._update_range_hint()
         self._update_summary()
+        self._schedule_graph_refresh()
 
     def _refresh_commit_list(self) -> None:
         """Show the first N pending commits (oldest first) in the listbox."""
@@ -789,6 +819,7 @@ class NumericKeypadDialog(tk.Toplevel):
 
     def _update_summary(self) -> None:
         """Refresh the live plan summary line."""
+        self._schedule_graph_refresh()
         if getattr(self, "summary_label", None) is None or self.date_mode_var is None:
             return
         count = self._selected_count()
@@ -810,6 +841,92 @@ class NumericKeypadDialog(tk.Toplevel):
         try:
             self.summary_var.set(text)
         except (tk.TclError, AttributeError):
+            pass
+
+    def _planned_highlight(self) -> dict[str, str]:
+        """Planned commit days {YYYY-MM-DD: note} for the embedded graph.
+
+        Same mapping as the "Preview on graph" button but silent: invalid
+        input simply yields no highlight instead of popups.
+        """
+        from datetime import datetime as _dt
+
+        try:
+            count = self._selected_count()
+        except Exception:
+            return {}
+        if count <= 0 or self.date_mode_var is None:
+            return {}
+        note = f"{count} planned commit(s)"
+        try:
+            mode = self.date_mode_var.get()
+        except (tk.TclError, AttributeError):
+            return {}
+        if mode == "custom":
+            try:
+                day = (self.custom_date_var.get().strip() if self.custom_date_var else "")
+                _dt.strptime(day, "%Y-%m-%d")
+            except (ValueError, AttributeError):
+                return {}
+            return {day: note}
+        if mode == "range":
+            try:
+                start = (self.range_start_date_var.get().strip() if self.range_start_date_var else "")
+                end = (self.range_end_date_var.get().strip() if self.range_end_date_var else "")
+                d0 = _dt.strptime(start, "%Y-%m-%d").date()
+                d1 = _dt.strptime(end, "%Y-%m-%d").date()
+            except (ValueError, AttributeError):
+                return {}
+            if d1 < d0:
+                return {}
+            out: dict[str, str] = {}
+            day_d = d0
+            while day_d <= d1:
+                out[day_d.isoformat()] = note
+                day_d += timedelta(days=1)
+            return out
+        return {_dt.now().strftime("%Y-%m-%d"): note}
+
+    def _schedule_graph_refresh(self) -> None:
+        """Debounced reload of the embedded contribution graph."""
+        if getattr(self, "graph", None) is None:
+            return
+        try:
+            if self._graph_job is not None:
+                self.after_cancel(self._graph_job)
+        except (tk.TclError, ValueError, AttributeError):
+            pass
+        self._graph_job = None
+        try:
+            self._graph_job = self.after(250, self._refresh_graph)
+        except tk.TclError:
+            pass
+
+    def _refresh_graph(self) -> None:
+        """Reload the embedded graph for the picked repo + planned days."""
+        self._graph_job = None
+        graph = getattr(self, "graph", None)
+        if graph is None:
+            return
+        try:
+            if not self.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        repo_path = ""
+        repo_name = ""
+        if self.repo_options:
+            opt = self.repo_options[self._repo_index]
+            repo_path = opt.get("path", "")
+            repo_name = opt.get("name", "")
+        if getattr(self, "graph_frame", None) is not None:
+            try:
+                self.graph_frame.configure(text=f"Contributions — {repo_name}" if repo_name else "Contributions")
+            except (tk.TclError, AttributeError):
+                pass
+        try:
+            graph.set_data(repo_path, self.graph_author or None, self._planned_highlight())
+        except Exception:
             pass
 
     def _on_key(self, key: str) -> None:

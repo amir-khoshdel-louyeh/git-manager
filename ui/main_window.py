@@ -1448,6 +1448,7 @@ class GitManagerGUI:
                 on_preview=lambda: self._open_move_preview(_holder.get("dialog")),
                 repo_options=candidates,
                 selected_index=selected_index,
+                graph_author=self._default_author_email(),
             )
             _holder["dialog"] = dialog
             enable_geometry_memory(dialog, self.db, "move")
