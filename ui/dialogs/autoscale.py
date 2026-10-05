@@ -2,12 +2,17 @@
 
 - Corner drags rescale everything with one factor, applied uniformly to
   fonts, wraplengths, paddings and tk.Scale geometry. A drag counts as a
-  corner only when BOTH edges moved more than 3% since the last applied
-  scale (measured against that anchor, not the previous sample) — hand
-  wobble on an edge drag therefore never triggers a rescale.
-- Single-edge drags are ignored while the content still fits (the layout
-  just stretches); if a shrink would clip the content, the content scales
-  down just enough to fit instead of breaking.
+  corner only when BOTH edges moved in the SAME gesture (each by at least
+  ~5px since the previous sample) AND both are displaced more than 3%
+  since the last applied scale — hand wobble on an edge drag therefore
+  never triggers a rescale.
+- Single-edge drags NEVER rescale, period (the layout just stretches; if
+  the window gets smaller than the content it clips like any normal app —
+  drag back or use a corner to fix it). The anchor is re-baselined on
+  every edge-only gesture so wobble can never accumulate across gestures
+  into a fake corner (previously two sequential single-edge drags — first
+  width, then height — were misread as one corner drag and wrongly
+  rescaled the fonts).
 - The window minimum is relaxed at enable time so shrink gestures can move
   freely (scaled content stays usable at small factors).
 
@@ -32,6 +37,11 @@ _EPSILON = 0.015
 #: A drag counts as a corner only when both edges moved at least this
 #: fraction (of the base size) since the last applied scale.
 _CORNER_FRACTION = 0.03
+#: Per-gesture simultaneity: each edge must move at least this much since
+#: the previous sample for the gesture to count as a corner drag. Catches
+#: slow diagonal drags split across pauses while rejecting 1-2px wobble.
+_GESTURE_FRACTION = 0.005
+_GESTURE_PX = 5
 
 
 def _iter_widgets(window: tk.Misc):
@@ -123,6 +133,9 @@ class _AutoScale:
         self.base_h = 0
         self.anchor_w = 0
         self.anchor_h = 0
+        self.prev_w = 0
+        self.prev_h = 0
+        self._samples = 0
         self.last_factor = 1.0
         self._after: str | None = None
 
@@ -137,6 +150,8 @@ class _AutoScale:
         if self.base_w < 50 or self.base_h < 50:
             return False
         self.anchor_w, self.anchor_h = self.base_w, self.base_h
+        self.prev_w, self.prev_h = self.base_w, self.base_h
+        self._samples = 0
         try:
             # Relax the minimum so shrink gestures move freely; the rescale
             # logic below guarantees content never gets clipped instead.
@@ -347,17 +362,35 @@ class _AutoScale:
             return
         if w < 50 or h < 50:
             return
-        # Corner = BOTH edges moved enough since the last applied scale.
-        # Measured against the anchor (not the previous sample) so slow
-        # diagonal drags accumulate correctly while edge wobble never fires.
+        self._samples += 1
+        if self._samples == 1:
+            # Settle: the first sample after arming only syncs state (it
+            # covers async geometry restores / the initial map) and never
+            # scales, so reopening a dialog at a saved size keeps factor 1.0.
+            self.prev_w, self.prev_h = w, h
+            self.anchor_w, self.anchor_h = w, h
+            return
+        # Per-gesture simultaneity: did BOTH edges move since the previous
+        # sample? An edge drag moves one axis (the other stays pixel-exact
+        # under the window manager); a corner drag moves both together.
+        gw = max(_GESTURE_PX, self.base_w * _GESTURE_FRACTION)
+        gh = max(_GESTURE_PX, self.base_h * _GESTURE_FRACTION)
+        simultaneous = abs(w - self.prev_w) >= gw and abs(h - self.prev_h) >= gh
+        self.prev_w, self.prev_h = w, h
+        if not simultaneous:
+            # Single edge: never rescale, whatever the size — and re-baseline
+            # the anchor so idle-axis wobble can never accumulate across
+            # gestures into a fake corner.
+            self.anchor_w, self.anchor_h = w, h
+            return
+        # Corner-ish gesture: still require BOTH edges displaced enough
+        # since the last applied scale; smaller drifts keep accumulating
+        # across pauses until a genuine corner drag completes.
         moved_w = abs(w - self.anchor_w) / self.base_w >= _CORNER_FRACTION
         moved_h = abs(h - self.anchor_h) / self.base_h >= _CORNER_FRACTION
-        need_w = self.base_w * self.last_factor
-        need_h = self.base_h * self.last_factor
-        fits = w >= need_w - 2 and h >= need_h - 2
-        if fits and not (moved_w and moved_h):
-            return  # single edge with room to spare: stretch only, no scaling
-        # Corner drag, or a shrink that would clip: fit content uniformly.
+        if not (moved_w and moved_h):
+            return
+        # Genuine corner drag: fit content uniformly.
         factor = min(w / self.base_w, h / self.base_h)
         factor = min(_MAX_FACTOR, max(_MIN_FACTOR, factor))
         # Never scale past what fits on screen.
