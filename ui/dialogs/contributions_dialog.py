@@ -19,6 +19,8 @@ _CELL = 14
 _GAP = 4
 _LEFT_PAD = 36
 _TOP_PAD = 26
+#: Extra breathing room around the table itself (all four sides, unscaled px).
+_TABLE_PAD = 50
 
 #: Zoom defaults/limits. Aspect ratio is always preserved: zoom scales the
 #: cell size and every dependent metric uniformly, then redraws the canvas.
@@ -185,9 +187,9 @@ class ContributionsDialog(tk.Toplevel):
             "cell": cell,
             "gap": gap,
             "step": cell + gap,
-            "left": round(_LEFT_PAD * z),
-            "top": round(_TOP_PAD * z),
-            "pad": round(8 * z),
+            "left": round(_LEFT_PAD * z) + _TABLE_PAD,
+            "top": round(_TOP_PAD * z) + _TABLE_PAD,
+            "pad": round(8 * z) + _TABLE_PAD,
             "font": max(8, round(9 * z)),
             "outline": max(2, round(z)),
         }
