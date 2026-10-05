@@ -765,6 +765,15 @@ class GitManagerGUI:
             highlight=highlight,
             initial_zoom=self.db.get_contrib_zoom(),
         )
+        # Focus the graph on the repo currently picked in the move dialog.
+        try:
+            picked = getattr(move_dialog, "selected_repo", None)
+            picked_name = picked.get("name") if isinstance(picked, dict) else None
+            if picked_name in dialog.repo_map:
+                dialog.repo_var.set(picked_name)
+                dialog._reload()
+        except Exception:
+            pass
         move_dialog.wait_window(dialog)
         self.db.set_contrib_zoom(dialog.zoom)
 
@@ -1317,77 +1326,128 @@ class GitManagerGUI:
     def action_move(self) -> None:
         if not self._start_operation("move commits"):
             return
-        state = self.selected_state()
-        if not state:
+        try:
+            # No pre-selection needed: the dialog itself lists every repo
+            # with commits to push, and we loop so several repositories can
+            # be pushed one after another.
+            while True:
+                if not self._move_single_repo():
+                    break
+        finally:
             self._end_operation()
-            return
-        repo = state.path
-        base_branch = state.base_branch
+
+    def _move_candidates(self) -> list[dict]:
+        """Return per-repo move data for repos with pending pushes.
+
+        Each entry carries ``name``, ``path``, ``base_branch``, ``pending``,
+        ``commit_items``, ``last_commit_info`` and ``last_commit_iso``.
+        Repos without a base branch, without ``local_commit``, or with zero
+        pending commits are skipped. All git calls are local and fast.
+        """
+        candidates: list[dict] = []
+        for state in self.states:
+            try:
+                base_branch = state.base_branch
+                if not base_branch:
+                    continue
+                repo = state.path
+                if not GitOperations.git_ok(["rev-parse", "--verify", "--quiet", "local_commit"], cwd=repo):
+                    continue
+                pending = int(
+                    GitOperations.run_git(["rev-list", "--count", f"{base_branch}..local_commit"], cwd=repo).strip() or "0"
+                )
+                if pending <= 0:
+                    continue
+                last_commit_info = None
+                last_commit_iso = None
+                try:
+                    if GitOperations.git_ok(["rev-parse", "--verify", "--quiet", base_branch], cwd=repo):
+                        try:
+                            last_commit_info = GitOperations.run_git(
+                                ["log", "-1", "--date=iso", "--pretty=format:%h  %ad  %s", base_branch], cwd=repo
+                            ).strip()
+                            last_commit_iso = GitOperations.run_git(
+                                ["log", "-1", "--pretty=format:%aI", base_branch], cwd=repo
+                            ).strip()
+                            if not last_commit_info:
+                                last_commit_info = None
+                                last_commit_iso = None
+                        except GitManagerError:
+                            last_commit_info = None
+                            last_commit_iso = None
+                except GitManagerError:
+                    pass
+                try:
+                    commit_items = GitOperations.run_git(
+                        ["log", "--reverse", "--pretty=format:%h %s", f"{base_branch}..local_commit"], cwd=repo
+                    ).strip().splitlines()
+                    commit_items = [line for line in commit_items if line]
+                except GitManagerError:
+                    commit_items = []
+                candidates.append(
+                    {
+                        "name": state.name,
+                        "path": str(repo),
+                        "base_branch": base_branch,
+                        "pending": pending,
+                        "commit_items": commit_items,
+                        "last_commit_info": last_commit_info,
+                        "last_commit_iso": last_commit_iso,
+                    }
+                )
+            except GitManagerError:
+                continue
+        return candidates
+
+    def _move_single_repo(self) -> bool:
+        """Run one move round: pick the repo inside the dialog, move+push it.
+
+        Returns True to open the dialog again for another repository.
+        """
+        candidates = self._move_candidates()
+        if not candidates:
+            messagebox.showinfo("No commits", "No commits to move.")
+            return False
+        # Preselect the tree selection when it has pending commits.
+        selected_index = 0
+        try:
+            sel = self.tree.selection()
+            if sel:
+                idx = int(sel[0])
+                if 0 <= idx < len(self.states):
+                    wanted = str(self.states[idx].path)
+                    for i, cand in enumerate(candidates):
+                        if cand["path"] == wanted:
+                            selected_index = i
+                            break
+        except (ValueError, tk.TclError, IndexError):
+            pass
         temp_branch: str | None = None
         base_before: str | None = None
         local_before: str | None = None
         stashed = False
         original_branch = "HEAD"
+        repo = Path(".")
+        base_branch = ""
         try:
-            GitConfig.ensure_identity(repo)
-            if not GitOperations.git_ok(["rev-parse", "--verify", "--quiet", "local_commit"], cwd=repo):
-                raise GitManagerError("local_commit does not exist")
-
-            # Fast local computation before opening window (no network)
-            pending = int(GitOperations.run_git(["rev-list", "--count", f"{base_branch}..local_commit"], cwd=repo).strip() or "0")
-            if pending == 0:
-                messagebox.showinfo("No commits", "No commits to move.")
-                return
-
-            # Fetch last commit on base for date validation and display (local only)
-            last_commit_info = None
-            last_commit_iso = None
-            try:
-                if base_branch and GitOperations.git_ok(["rev-parse", "--verify", "--quiet", base_branch], cwd=repo):
-                    try:
-                        last_commit_info = GitOperations.run_git(
-                            ["log", "-1", "--date=iso", "--pretty=format:%h  %ad  %s", base_branch], cwd=repo
-                        ).strip()
-                        last_commit_iso = GitOperations.run_git(
-                            ["log", "-1", "--pretty=format:%aI", base_branch], cwd=repo
-                        ).strip()
-                        if not last_commit_info:
-                            last_commit_info = None
-                            last_commit_iso = None
-                    except GitManagerError:
-                        last_commit_info = None
-                        last_commit_iso = None
-            except GitManagerError:
-                pass
-
-            # Pending commit subjects (oldest first) for the selection preview
-            try:
-                commit_items = GitOperations.run_git(
-                    ["log", "--reverse", "--pretty=format:%h %s", f"{base_branch}..local_commit"], cwd=repo
-                ).strip().splitlines()
-                commit_items = [line for line in commit_items if line]
-            except GitManagerError:
-                commit_items = []
-
             # Open window first for fast UI response
             # (holder lets the preview callback reference the dialog itself)
             _holder: dict[str, object] = {}
             dialog = NumericKeypadDialog(
                 self.root,
                 "Move commits",
-                f"How many commits to move to {state.base_branch}?\n(1 to {pending})",
+                "Move commits",
                 minvalue=1,
-                maxvalue=pending,
+                maxvalue=1,
                 theme_mode=self.theme_mode,
                 show_date_options=True,
-                last_commit_info=last_commit_info,
-                last_commit_iso=last_commit_iso,
                 work_start_hour=getattr(self, "work_start_hour", "09:00"),
                 work_end_hour=getattr(self, "work_end_hour", "18:00"),
                 min_commits_per_day=getattr(self, "min_commits_per_day", 1),
                 max_commits_per_day=getattr(self, "max_commits_per_day", 10),
-                commit_items=commit_items,
                 on_preview=lambda: self._open_move_preview(_holder.get("dialog")),
+                repo_options=candidates,
+                selected_index=selected_index,
             )
             _holder["dialog"] = dialog
             enable_geometry_memory(dialog, self.db, "move")
@@ -1395,7 +1455,27 @@ class GitManagerGUI:
             self.root.wait_window(dialog)
             num = dialog.result
             if num is None:
-                return
+                return False
+            opt = dialog.selected_repo or candidates[selected_index]
+            repo = Path(opt["path"])
+            base_branch = opt["base_branch"]
+            repo_name = opt["name"]
+
+            GitConfig.ensure_identity(repo)
+            if not GitOperations.git_ok(["rev-parse", "--verify", "--quiet", "local_commit"], cwd=repo):
+                raise GitManagerError("local_commit does not exist")
+
+            # Fast local computation after the dialog (no network)
+            pending = int(GitOperations.run_git(["rev-list", "--count", f"{base_branch}..local_commit"], cwd=repo).strip() or "0")
+            if pending == 0:
+                messagebox.showinfo("No commits", f"No commits to move in {repo_name}.")
+                return True
+            if num > pending:
+                raise GitManagerError(f"Selected {num} commits but only {pending} pending. Please retry.")
+
+            # Display data for the chosen repo (preloaded for the dialog).
+            last_commit_info = opt.get("last_commit_info")
+            last_commit_iso = opt.get("last_commit_iso")
             # Determine per-commit date/times to use
             from utils.time_utils import distribute_across_days, distribute_in_window
             from utils.time_utils import is_after_last_commit as _is_after
@@ -1454,7 +1534,7 @@ class GitManagerGUI:
                     parent=self.root,
                 ):
                     self.append_output("⏭ Move cancelled — future date not confirmed.\n")
-                    return
+                    return False
 
             # Fetch after window was shown - rely on git error handling, no proactive check
             if GitOperations.git_ok(["remote", "get-url", "origin"], cwd=repo):
@@ -1520,7 +1600,7 @@ class GitManagerGUI:
                     "Working tree not clean. Stash (incl. untracked) and continue?\n"
                     "This will also abort any ongoing merge/cherry-pick/rebase first.",
                 ):
-                    return
+                    return False
                 self._abort_in_progress_ops(repo)
                 WorkingTreeManager.stash(repo, f"git-manager auto-stash before moving commits ({now_display()})")
                 stashed = True
@@ -1628,7 +1708,7 @@ class GitManagerGUI:
                         WorkingTreeManager.pop_stash(repo)
                     except GitManagerError as exc:
                         self.append_output(f"⚠️ Stash pop failed: {str(exc)}\nResolve manually with 'git stash pop'\n")
-                return
+                return False
 
             self.append_output(f"📜 Latest moved commits on {base_branch} (with author info):\n")
             latest_log = GitOperations.run_git(["log", "-n", str(processed_count), temp_branch, "--no-decorate", "--date=iso", "--pretty=format:  %h  %ad  %an <%ae>"], cwd=repo)
@@ -1788,6 +1868,16 @@ class GitManagerGUI:
                 temp_branch = None
             self.refresh_repos()
             self.append_output("✅ Move complete. local_commit and the base branch are now updated.\n")
+            remaining = self._move_candidates()
+            if not remaining:
+                return False
+            if not messagebox.askyesno(
+                "Move more commits?",
+                "Move complete. Other repositories still have commits to move.\n\nMove commits for another repository?",
+                parent=self.root,
+            ):
+                return False
+            return True
         except GitManagerError as exc:
             self.append_output(f"\n❌ Error: {str(exc)}\n")
             if temp_branch or base_before or local_before:
@@ -1830,6 +1920,7 @@ class GitManagerGUI:
                 self._show_no_internet_error(exc)
             else:
                 messagebox.showerror("Operation Failed", "An error occurred. Check the output panel for details.")
+            return False
         finally:
             # Guarantee temp_branch cleanup even if exception occurred before except block
             if temp_branch and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{temp_branch}"], cwd=repo):
@@ -1837,4 +1928,3 @@ class GitManagerGUI:
                     GitOperations.run_git(["branch", "-D", temp_branch], cwd=repo)
                 except GitManagerError:
                     pass
-            self._end_operation()

@@ -49,12 +49,20 @@ class NumericKeypadDialog(tk.Toplevel):
 
     When ``show_date_options`` is True (used for Move Commits), the dialog shows
     a horizontally-split layout:
-    - Left column ("Commits to move"): count spinbox + commit list preview
-      showing the first N pending commits (oldest first).
+    - Left column: repository navigator (when ``repo_options`` are given) +
+      "Commits to move" count spinbox + commit list preview showing the first
+      N pending commits (oldest first). Switching repository reloads the
+      count, list, last-commit info and date defaults, so several
+      repositories can be pushed one after another.
     - Right column: last commit info + "When" section (Today / Day / Range).
       Only the sub-panel of the selected mode is visible; specific day is
       date-only plus a time range (from → to) on that same day.
     A live summary line spans the bottom above OK/Cancel.
+
+    ``repo_options`` entries are dicts with ``name``, ``path``,
+    ``base_branch``, ``pending``, ``commit_items``, ``last_commit_info`` and
+    ``last_commit_iso``. The chosen entry is available as ``selected_repo``
+    after OK (``result`` stays the plain commit count).
     """
 
     def __init__(
@@ -74,11 +82,13 @@ class NumericKeypadDialog(tk.Toplevel):
         max_commits_per_day: int = 10,
         commit_items: Optional[list[str]] = None,
         on_preview: Optional[Callable[[], None]] = None,
+        repo_options: Optional[list[dict]] = None,
+        selected_index: int = 0,
     ) -> None:
         super().__init__(parent)
         self.title(title)
         # Bigger window: allow resizing horizontally, but keep minsize large
-        self.minsize(_px(920), _px(600))
+        self.minsize(_px(920), _px(600) - 25)
         self.resizable(True, True)
         self.result: Optional[int] = None
         self.minvalue = minvalue
@@ -107,6 +117,23 @@ class NumericKeypadDialog(tk.Toplevel):
         self.commit_items: list[str] = list(commit_items or [])
         self.on_preview: Optional[Callable[[], None]] = on_preview
 
+        # Multi-repo navigation (Move Commits): each option carries everything
+        # needed to render one repository; switching reloads the panel.
+        self.repo_options: list[dict] = list(repo_options or [])
+        if self.repo_options:
+            selected_index = max(0, min(int(selected_index), len(self.repo_options) - 1))
+            opt = self.repo_options[selected_index]
+            minvalue = 1
+            maxvalue = max(1, int(opt.get("pending", 1)))
+            last_commit_info = opt.get("last_commit_info")
+            last_commit_iso = opt.get("last_commit_iso")
+            commit_items = list(opt.get("commit_items") or [])
+            self.commit_items = list(commit_items)
+        self._repo_index: int = selected_index if self.repo_options else -1
+        self.selected_repo: Optional[dict] = (
+            self.repo_options[self._repo_index] if self.repo_options else None
+        )
+
         dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
         self.configure(bg=dialog_bg)
 
@@ -115,11 +142,14 @@ class NumericKeypadDialog(tk.Toplevel):
         self.grab_set()
 
         # Prompt label (spans full width, top)
-        ttk.Label(self, text=prompt, font=_font("Helvetica", 12, "bold"), justify=tk.CENTER, style="Dialog.TLabel", wraplength=_px(820)).pack(pady=(_px(16), _px(10)), padx=_px(20), fill=tk.X)
+        self.prompt_label = ttk.Label(self, text=prompt, font=_font("Helvetica", 12, "bold"), justify=tk.CENTER, style="Dialog.TLabel", wraplength=_px(820))
+        self.prompt_label.pack(pady=(_px(16), _px(10)), padx=_px(20), fill=tk.X)
+        if self.repo_options:
+            self.prompt_label.configure(text=self._prompt_for(self.repo_options[self._repo_index]))
 
         # ===================== HORIZONTAL GRID CONTENT =====================
         content = ttk.Frame(self, style="Dialog.TFrame")
-        content.pack(fill=tk.BOTH, expand=True, padx=_px(20), pady=_px(5))
+        content.pack(fill=tk.BOTH, expand=True, padx=_px(20), pady=_px(4))
 
         if self.show_date_options:
             # Horizontal split: left = count + commit list, right = date options
@@ -127,17 +157,49 @@ class NumericKeypadDialog(tk.Toplevel):
             content.columnconfigure(1, weight=1, uniform="col")
             content.rowconfigure(0, weight=1)
 
-            # ----- LEFT COLUMN: Commits to move -----
+            # ----- LEFT COLUMN: repository navigator + commits to move -----
             left = ttk.LabelFrame(content, text="Commits to move", padding=_px(14), style="Dialog.TLabelframe")
             left.grid(row=0, column=0, sticky="nsew", padx=(0, _px(10)), pady=_px(5))
             left.columnconfigure(0, weight=1)
-            left.rowconfigure(2, weight=1)
+            # Row offset when the repository navigator is present.
+            ro = 1 if self.repo_options else 0
+            left.rowconfigure(ro + 2, weight=1)
+
+            if self.repo_options:
+                repo_frame = ttk.LabelFrame(left, text="Repository (has commits to push)", padding=_px(4), style="Dialog.TLabelframe")
+                repo_frame.grid(row=0, column=0, sticky="ew", pady=(0, _px(4)))
+                repo_frame.columnconfigure(0, weight=1)
+                repo_bg = "#1e2228" if theme_mode == "dark" else "#f1f5f9"
+                repo_fg = "#e8e8e8" if theme_mode == "dark" else "#111827"
+                self.repo_listbox = tk.Listbox(
+                    repo_frame,
+                    height=min(6, len(self.repo_options)),
+                    font=_font("Helvetica", 10),
+                    bg=repo_bg,
+                    fg=repo_fg,
+                    selectbackground="#4a90d9",
+                    selectforeground="#ffffff",
+                    activestyle="none",
+                    highlightthickness=0,
+                    relief=tk.SOLID,
+                    bd=1,
+                    exportselection=False,
+                )
+                self.repo_listbox.grid(row=0, column=0, sticky="ew")
+                repo_scroll = ttk.Scrollbar(repo_frame, orient=tk.VERTICAL, command=self.repo_listbox.yview)
+                repo_scroll.grid(row=0, column=1, sticky="ns")
+                self.repo_listbox.configure(yscrollcommand=repo_scroll.set)
+                for option in self.repo_options:
+                    self.repo_listbox.insert(tk.END, f"{option.get('name')} ({option.get('pending')})")
+                self.repo_listbox.selection_set(self._repo_index)
+                self.repo_listbox.see(self._repo_index)
+                self.repo_listbox.bind("<<ListboxSelect>>", self._on_repo_select)
 
             # Count row: slider + number + All button + total (easy grab, no tiny +/-)
             self.value_var = tk.StringVar(value=str(maxvalue))
             self._syncing_scale = False
             count_row = ttk.Frame(left, style="Dialog.TFrame")
-            count_row.grid(row=0, column=0, sticky="ew", pady=(_px(4), _px(8)))
+            count_row.grid(row=ro + 0, column=0, sticky="ew", pady=(_px(2), _px(8)))
             ttk.Label(count_row, text="Count:", font=_font("Helvetica", 11, "bold"), style="Dialog.TLabel").pack(side=tk.LEFT)
             scale_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
             scale_trough = "#1e2228" if theme_mode == "dark" else "#d7dde5"
@@ -165,14 +227,15 @@ class NumericKeypadDialog(tk.Toplevel):
             self.count_scale.set(maxvalue)
             ttk.Label(count_row, textvariable=self.value_var, font=_font("Helvetica", 12, "bold"), width=_px(4), anchor=tk.CENTER, style="Dialog.TLabel").pack(side=tk.LEFT)
             ttk.Button(count_row, text="All", width=_px(6), command=self._on_select_all, style="Dialog.TButton").pack(side=tk.LEFT, padx=(_px(8), 0))
-            ttk.Label(count_row, text=f"of {maxvalue}", font=_font("Helvetica", 10), style="Dialog.TLabel").pack(side=tk.LEFT, padx=(_px(8), 0))
+            self.of_var = tk.StringVar(value=f"of {maxvalue}")
+            ttk.Label(count_row, textvariable=self.of_var, font=_font("Helvetica", 10), style="Dialog.TLabel").pack(side=tk.LEFT, padx=(_px(8), 0))
 
             self.count_info_var = tk.StringVar(value="")
-            ttk.Label(left, textvariable=self.count_info_var, font=_font("Helvetica", 9, "italic"), style="Dialog.TLabel").grid(row=1, column=0, sticky="w", pady=(0, _px(6)))
+            ttk.Label(left, textvariable=self.count_info_var, font=_font("Helvetica", 9, "italic"), style="Dialog.TLabel").grid(row=ro + 1, column=0, sticky="w", pady=(0, _px(6)))
 
             # Commit list preview (first N, oldest first)
             list_frame = ttk.Frame(left, style="Dialog.TFrame")
-            list_frame.grid(row=2, column=0, sticky="nsew")
+            list_frame.grid(row=ro + 2, column=0, sticky="nsew")
             list_frame.columnconfigure(0, weight=1)
             list_frame.rowconfigure(0, weight=1)
             entry_bg = "#1e2228" if theme_mode == "dark" else "#f1f5f9"
@@ -204,7 +267,7 @@ class NumericKeypadDialog(tk.Toplevel):
                 text="Tip: drag the slider or click a row to pick how many.",
                 font=_font("Helvetica", 8, "italic"),
                 style="Dialog.TLabel",
-            ).grid(row=3, column=0, sticky="w", pady=(_px(6), 0))
+            ).grid(row=ro + 3, column=0, sticky="w", pady=(_px(6), 0))
 
             # ----- RIGHT COLUMN -----
             right = ttk.Frame(content, style="Dialog.TFrame")
@@ -213,25 +276,50 @@ class NumericKeypadDialog(tk.Toplevel):
             right.rowconfigure(1, weight=1)
 
             # Last commit info — compact, collapsible feel
-            if self.last_commit_info:
+            # (StringVar-backed when switching repositories dynamically)
+            self.info_text_var: Optional[tk.StringVar] = None
+            self.info_hint_var: Optional[tk.StringVar] = None
+            if self.repo_options or self.last_commit_info:
                 info_frame = ttk.LabelFrame(right, text="Last commit on base", padding=_px(10), style="Dialog.TLabelframe")
                 info_frame.grid(row=0, column=0, sticky="ew", pady=(0, _px(10)))
                 info_frame.columnconfigure(0, weight=1)
-                info_label = ttk.Label(
-                    info_frame,
-                    text=self.last_commit_info,
-                    font=_font("Courier", 9),
-                    wraplength=_px(380),
-                    justify=tk.LEFT,
-                    style="Dialog.TLabel",
-                )
+                if self.repo_options:
+                    self.info_text_var = tk.StringVar(value=self.last_commit_info or "")
+                    info_label = ttk.Label(
+                        info_frame,
+                        textvariable=self.info_text_var,
+                        font=_font("Courier", 9),
+                        wraplength=_px(380),
+                        justify=tk.LEFT,
+                        style="Dialog.TLabel",
+                    )
+                else:
+                    info_label = ttk.Label(
+                        info_frame,
+                        text=self.last_commit_info,
+                        font=_font("Courier", 9),
+                        wraplength=_px(380),
+                        justify=tk.LEFT,
+                        style="Dialog.TLabel",
+                    )
                 info_label.grid(row=0, column=0, sticky="w")
-                ttk.Label(
-                    info_frame,
-                    text="Chosen date must be after this commit.",
-                    font=_font("Helvetica", 8, "italic"),
-                    style="Dialog.TLabel",
-                ).grid(row=1, column=0, sticky="w", pady=(_px(6), 0))
+                if self.repo_options:
+                    self.info_hint_var = tk.StringVar(
+                        value="Chosen date must be after this commit." if self.last_commit_info else ""
+                    )
+                    ttk.Label(
+                        info_frame,
+                        textvariable=self.info_hint_var,
+                        font=_font("Helvetica", 8, "italic"),
+                        style="Dialog.TLabel",
+                    ).grid(row=1, column=0, sticky="w", pady=(_px(6), 0))
+                else:
+                    ttk.Label(
+                        info_frame,
+                        text="Chosen date must be after this commit.",
+                        font=_font("Helvetica", 8, "italic"),
+                        style="Dialog.TLabel",
+                    ).grid(row=1, column=0, sticky="w", pady=(_px(6), 0))
             else:
                 ttk.Label(
                     right,
@@ -330,6 +418,8 @@ class NumericKeypadDialog(tk.Toplevel):
             self.custom_time_from_var.trace_add("write", lambda *a: self._update_summary())
             self.custom_time_to_var.trace_add("write", lambda *a: self._update_summary())
             self.value_var.trace_add("write", lambda *a: self._refresh_live())
+            if self.repo_options:
+                self._select_repo(self._repo_index)
             self._refresh_commit_list()
             self._update_range_hint()
             self._update_summary()
@@ -425,7 +515,7 @@ class NumericKeypadDialog(tk.Toplevel):
             cur_w = self.winfo_width()
             cur_h = self.winfo_height()
             target_w = max(cur_w, _px(920))
-            target_h = max(cur_h, _px(600))
+            target_h = max(cur_h, _px(600) - 25)
             self.geometry(f"{target_w}x{target_h}")
             self.update_idletasks()
         x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_width() // 2)
@@ -443,6 +533,83 @@ class NumericKeypadDialog(tk.Toplevel):
         if hasattr(self, "custom_time_from_entry"):
             self.custom_time_from_entry.configure(state=state)
             self.custom_time_to_entry.configure(state=state)
+
+    @staticmethod
+    def _prompt_for(opt: dict) -> str:
+        """Prompt line for one repository option (count info is enough)."""
+        return (
+            f"How many commits to move to {opt.get('base_branch')}?\n"
+            f"(1 to {opt.get('pending')})"
+        )
+
+    def _on_repo_select(self, event: tk.Event | None = None) -> None:
+        """Repository navigator clicked: reload the panel for that repo."""
+        try:
+            sel = self.repo_listbox.curselection()
+            if not sel:
+                return
+            idx = int(sel[0])
+        except (tk.TclError, ValueError, AttributeError):
+            return
+        if idx == self._repo_index:
+            return
+        self._select_repo(idx)
+        self._update_range_hint()
+        self._update_summary()
+
+    def _select_repo(self, idx: int) -> None:
+        """Switch the whole panel to another repository option."""
+        if not self.repo_options:
+            return
+        idx = max(0, min(int(idx), len(self.repo_options) - 1))
+        self._repo_index = idx
+        opt = self.repo_options[idx]
+        self.selected_repo = opt
+        pending = max(1, int(opt.get("pending", 1)))
+        self.minvalue = 1
+        self.maxvalue = pending
+        self.last_commit_info = opt.get("last_commit_info")
+        self.last_commit_iso = opt.get("last_commit_iso")
+        self.commit_items = list(opt.get("commit_items") or [])
+        try:
+            self.prompt_label.configure(text=self._prompt_for(opt))
+        except (tk.TclError, AttributeError):
+            pass
+        try:
+            self.value_var.set(str(pending))
+        except (tk.TclError, AttributeError):
+            pass
+        if getattr(self, "of_var", None) is not None:
+            try:
+                self.of_var.set(f"of {pending}")
+            except (tk.TclError, AttributeError):
+                pass
+        if hasattr(self, "count_scale"):
+            try:
+                self.count_scale.configure(from_=1, to=pending)
+            except tk.TclError:
+                pass
+        self._refresh_commit_list()
+        if getattr(self, "info_text_var", None) is not None:
+            try:
+                info = self.last_commit_info
+                self.info_text_var.set(
+                    info if info else "No prior commits on base (first commit). Any date is allowed."
+                )
+                if getattr(self, "info_hint_var", None) is not None:
+                    self.info_hint_var.set("Chosen date must be after this commit." if info else "")
+            except (tk.TclError, AttributeError):
+                pass
+        # Date defaults follow the new repo's tip commit.
+        try:
+            if self.custom_date_var is not None:
+                self.custom_date_var.set(suggest_date_after(self.last_commit_iso))
+            if self.range_start_date_var is not None:
+                self.range_start_date_var.set(suggest_date_after(self.last_commit_iso))
+            if self.range_end_date_var is not None:
+                self.range_end_date_var.set(suggest_date_after(self.last_commit_iso))
+        except (tk.TclError, AttributeError):
+            pass
 
     def _set_range_entries_state(self, state: str) -> None:
         if hasattr(self, "range_start_entry"):
@@ -813,6 +980,8 @@ class NumericKeypadDialog(tk.Toplevel):
             self.range_end_iso = None
 
         self.result = value
+        if self.repo_options:
+            self.selected_repo = self.repo_options[self._repo_index]
         self.destroy()
 
     @staticmethod
