@@ -1,14 +1,18 @@
-"""Proportional dialog scaling: text (and spacing) follows window resizes.
+"""Proportional dialog scaling: text (and spacing) follows corner resizes.
 
-When enabled on a dialog, every later resize recomputes a single factor
-(``min(width/base_w, height/base_h)``) and applies it uniformly to:
+- Corner drags rescale everything with one factor, applied uniformly to
+  fonts, wraplengths, paddings and tk.Scale geometry. A drag counts as a
+  corner only when BOTH edges moved more than 3% since the last applied
+  scale (measured against that anchor, not the previous sample) — hand
+  wobble on an edge drag therefore never triggers a rescale.
+- Single-edge drags are ignored while the content still fits (the layout
+  just stretches); if a shrink would clip the content, the content scales
+  down just enough to fit instead of breaking.
+- The window minimum is relaxed at enable time so shrink gestures can move
+  freely (scaled content stays usable at small factors).
 
-- all widget fonts (explicit ones, plus style-driven ttk text which gets a
-  private font copy resolved from its style — the global theme is never
-  touched),
-- wraplengths,
-- grid/pack paddings (padx/pady/ipadx/ipady),
-- tk.Scale pixel options (length/width/sliderlength).
+Style-driven ttk text gets a per-dialog style clone resolved from its style
+(the global theme is never touched).
 
 Everything is defensive: any widget that cannot be read or written is
 skipped, so scaling can never break a dialog. Canvas widgets are skipped
@@ -25,6 +29,9 @@ _MIN_FACTOR = 0.5
 _MAX_FACTOR = 3.0
 _MIN_FONT_SIZE = 6
 _EPSILON = 0.015
+#: A drag counts as a corner only when both edges moved at least this
+#: fraction (of the base size) since the last applied scale.
+_CORNER_FRACTION = 0.03
 
 
 def _iter_widgets(window: tk.Misc):
@@ -114,6 +121,8 @@ class _AutoScale:
         self.scales: list[tuple[tk.Widget, dict[str, int]]] = []
         self.base_w = 0
         self.base_h = 0
+        self.anchor_w = 0
+        self.anchor_h = 0
         self.last_factor = 1.0
         self._after: str | None = None
 
@@ -127,6 +136,16 @@ class _AutoScale:
             return False
         if self.base_w < 50 or self.base_h < 50:
             return False
+        self.anchor_w, self.anchor_h = self.base_w, self.base_h
+        try:
+            # Relax the minimum so shrink gestures move freely; the rescale
+            # logic below guarantees content never gets clipped instead.
+            self.window.minsize(
+                max(200, int(self.base_w * _MIN_FACTOR)),
+                max(150, int(self.base_h * _MIN_FACTOR)),
+            )
+        except tk.TclError:
+            pass
         for widget in _iter_widgets(self.window):
             self._record_widget(widget)
         return True
@@ -322,15 +341,35 @@ class _AutoScale:
                 return
             w = self.window.winfo_width()
             h = self.window.winfo_height()
+            screen_w = self.window.winfo_screenwidth()
+            screen_h = self.window.winfo_screenheight()
         except tk.TclError:
             return
         if w < 50 or h < 50:
             return
+        # Corner = BOTH edges moved enough since the last applied scale.
+        # Measured against the anchor (not the previous sample) so slow
+        # diagonal drags accumulate correctly while edge wobble never fires.
+        moved_w = abs(w - self.anchor_w) / self.base_w >= _CORNER_FRACTION
+        moved_h = abs(h - self.anchor_h) / self.base_h >= _CORNER_FRACTION
+        need_w = self.base_w * self.last_factor
+        need_h = self.base_h * self.last_factor
+        fits = w >= need_w - 2 and h >= need_h - 2
+        if fits and not (moved_w and moved_h):
+            return  # single edge with room to spare: stretch only, no scaling
+        # Corner drag, or a shrink that would clip: fit content uniformly.
         factor = min(w / self.base_w, h / self.base_h)
         factor = min(_MAX_FACTOR, max(_MIN_FACTOR, factor))
+        # Never scale past what fits on screen.
+        try:
+            max_fit = min(0.95 * screen_w / self.base_w, 0.95 * screen_h / self.base_h)
+            factor = max(_MIN_FACTOR, min(factor, max_fit))
+        except ZeroDivisionError:
+            pass
         if abs(factor - self.last_factor) < _EPSILON:
             return
         self.last_factor = factor
+        self.anchor_w, self.anchor_h = w, h
         self.apply(factor)
 
 

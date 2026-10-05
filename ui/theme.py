@@ -128,10 +128,65 @@ def apply_theme(
         foreground=[('disabled', '#888888'), ('!disabled', fg)]
     )
     style.configure("Dialog.TEntry", fieldbackground=entry_bg, foreground=entry_fg, background=entry_bg)
+    style.map("Dialog.TEntry",
+        fieldbackground=[('disabled', entry_bg), ('readonly', entry_bg)],
+        foreground=[('disabled', '#888888'), ('!disabled', entry_fg)]
+    )
+    style.configure("TEntry", fieldbackground=entry_bg, foreground=entry_fg)
+    style.map("TEntry",
+        fieldbackground=[('disabled', entry_bg), ('readonly', entry_bg)],
+        foreground=[('disabled', '#888888'), ('!disabled', entry_fg)]
+    )
     style.configure("Dialog.TLabelframe", background=frame_bg, foreground=fg)
     style.configure("Dialog.TLabelframe.Label", background=frame_bg, foreground=fg)
-    style.configure("Dialog.TRadiobutton", background=frame_bg, foreground=fg)
+    style.configure("Dialog.TRadiobutton", background=frame_bg, foreground=fg, font=("Helvetica", button_font_size))
+    style.map("Dialog.TRadiobutton",
+        background=[('active', frame_bg), ('pressed', frame_bg), ('!disabled', frame_bg)],
+        foreground=[('disabled', '#888888'), ('!disabled', fg)],
+        indicatorbackground=[('!disabled', entry_bg)],
+        indicatorforeground=[('!disabled', fg)],
+    )
+    style.configure("Dialog.TCheckbutton", background=frame_bg, foreground=fg, font=("Helvetica", button_font_size))
+    style.map("Dialog.TCheckbutton",
+        background=[('active', frame_bg), ('pressed', frame_bg), ('!disabled', frame_bg)],
+        foreground=[('disabled', '#888888'), ('!disabled', fg)],
+        indicatorbackground=[('!disabled', entry_bg)],
+        indicatorforeground=[('!disabled', fg)],
+    )
+    style.map("TCheckbutton",
+        indicatorbackground=[('!disabled', entry_bg)],
+        indicatorforeground=[('!disabled', fg)],
+    )
+    style.map("TRadiobutton",
+        indicatorbackground=[('!disabled', entry_bg)],
+        indicatorforeground=[('!disabled', fg)],
+    )
     style.configure("Dialog.TSpinbox", fieldbackground=entry_bg, foreground=entry_fg, background=entry_bg)
+    style.map("Dialog.TSpinbox",
+        fieldbackground=[('disabled', entry_bg), ('readonly', entry_bg)],
+        foreground=[('disabled', '#888888'), ('!disabled', entry_fg)]
+    )
+    style.configure("TSpinbox", fieldbackground=entry_bg, foreground=entry_fg, background=entry_bg)
+    style.map("TSpinbox",
+        fieldbackground=[('disabled', entry_bg), ('readonly', entry_bg)],
+        foreground=[('disabled', '#888888'), ('!disabled', entry_fg)]
+    )
+    style.configure("TCombobox",
+        fieldbackground=entry_bg, foreground=entry_fg, background=button_bg,
+        arrowcolor=fg, selectbackground=selected_bg, selectforeground=selected_fg,
+    )
+    style.map("TCombobox",
+        fieldbackground=[('readonly', entry_bg), ('disabled', entry_bg)],
+        foreground=[('disabled', '#888888'), ('!disabled', entry_fg)],
+        background=[('active', button_active), ('pressed', button_active), ('!disabled', button_bg)],
+        arrowcolor=[('disabled', '#888888'), ('!disabled', fg)],
+    )
+    style.configure("TMenubutton", background=button_bg, foreground=fg, arrowcolor=fg)
+    style.map("TMenubutton",
+        background=[('active', button_active), ('pressed', button_active), ('!disabled', button_bg)],
+        foreground=[('disabled', '#888888'), ('!disabled', fg)],
+        arrowcolor=[('disabled', '#888888'), ('!disabled', fg)],
+    )
     style.configure(
         "Treeview",
         background=text_bg,
@@ -155,6 +210,21 @@ def apply_theme(
     )
     style.configure("Horizontal.TScrollbar", background=frame_bg)
     style.configure("Vertical.TScrollbar", background=frame_bg)
+
+    # Popup menus (OptionMenu) and combobox dropdown lists follow the theme too.
+    try:
+        root.option_add("*Menu.background", frame_bg)
+        root.option_add("*Menu.foreground", fg)
+        root.option_add("*Menu.activeBackground", selected_bg)
+        root.option_add("*Menu.activeForeground", selected_fg)
+        root.option_add("*Menu.disabledForeground", "#888888")
+        root.option_add("*Menu.selectColor", fg)
+        root.option_add("*TCombobox*Listbox.background", entry_bg)
+        root.option_add("*TCombobox*Listbox.foreground", entry_fg)
+        root.option_add("*TCombobox*Listbox.selectBackground", selected_bg)
+        root.option_add("*TCombobox*Listbox.selectForeground", selected_fg)
+    except tk.TclError:
+        pass
 
     if output_widget is not None:
         try:

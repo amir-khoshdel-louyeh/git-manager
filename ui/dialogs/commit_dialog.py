@@ -76,6 +76,10 @@ class CommitDialog(tk.Toplevel):
         x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_width() // 2)
         y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.winfo_height() // 2)
         self.geometry(f"+{x}+{y}")
+        try:
+            self.message_text.focus_set()
+        except tk.TclError:
+            pass
 
     def _set_custom_state(self, state: str) -> None:
         try:

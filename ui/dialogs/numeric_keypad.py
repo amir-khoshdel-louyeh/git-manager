@@ -164,7 +164,7 @@ class NumericKeypadDialog(tk.Toplevel):
             self.count_scale.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(_px(8), _px(4)))
             self.count_scale.set(maxvalue)
             ttk.Label(count_row, textvariable=self.value_var, font=_font("Helvetica", 12, "bold"), width=_px(4), anchor=tk.CENTER, style="Dialog.TLabel").pack(side=tk.LEFT)
-            ttk.Button(count_row, text="All", width=_px(6), command=self._on_select_all).pack(side=tk.LEFT, padx=(_px(8), 0))
+            ttk.Button(count_row, text="All", width=_px(6), command=self._on_select_all, style="Dialog.TButton").pack(side=tk.LEFT, padx=(_px(8), 0))
             ttk.Label(count_row, text=f"of {maxvalue}", font=_font("Helvetica", 10), style="Dialog.TLabel").pack(side=tk.LEFT, padx=(_px(8), 0))
 
             self.count_info_var = tk.StringVar(value="")
@@ -191,6 +191,7 @@ class NumericKeypadDialog(tk.Toplevel):
                 relief=tk.SOLID,
                 bd=1,
                 takefocus=0,
+                cursor="hand2",
             )
             self.commit_listbox.grid(row=0, column=0, sticky="nsew")
             list_scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.commit_listbox.yview)
@@ -430,6 +431,11 @@ class NumericKeypadDialog(tk.Toplevel):
         x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_width() // 2)
         y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.winfo_height() // 2)
         self.geometry(f"+{x}+{y}")
+        try:
+            if self.show_date_options and hasattr(self, "count_scale"):
+                self.count_scale.focus_set()
+        except tk.TclError:
+            pass
 
     def _set_custom_entries_state(self, state: str) -> None:
         if hasattr(self, "custom_date_entry"):

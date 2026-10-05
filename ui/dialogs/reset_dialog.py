@@ -13,7 +13,7 @@ class ResetDialog(tk.Toplevel):
     def __init__(self, parent: tk.Tk, repo_name: str, theme_mode: str = "light") -> None:
         super().__init__(parent)
         self.title(f"Reset {repo_name}")
-        self.resizable(False, False)
+        self.resizable(True, True)
         self.result: Optional[tuple[str, str]] = None
         self.theme_mode = theme_mode
 

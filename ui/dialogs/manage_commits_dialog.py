@@ -96,7 +96,7 @@ class ManageCommitsDialog(tk.Toplevel):
         entry_row.pack(fill=tk.X, pady=(6, 8))
         self.target_entry = ttk.Entry(entry_row, textvariable=self.target_var, style="Dialog.TEntry")
         self.target_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(entry_row, text="HEAD~1", width=8, command=lambda: self.target_var.set("HEAD~1")).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(entry_row, text="HEAD~1", width=8, command=lambda: self.target_var.set("HEAD~1"), style="Dialog.TButton").pack(side=tk.LEFT, padx=(6, 0))
         ttk.Label(self.reset_frame, text="Reset type:", font=("Helvetica", 10, "bold"), style="Dialog.TLabel").pack(anchor=tk.W, pady=(8, 4))
         self.reset_type = tk.StringVar(value="hard")
         types_frame = ttk.Frame(self.reset_frame, style="Dialog.TFrame")
@@ -105,7 +105,12 @@ class ManageCommitsDialog(tk.Toplevel):
             ttk.Radiobutton(types_frame, text=t.capitalize(), variable=self.reset_type, value=t, style="Dialog.TRadiobutton").pack(side=tk.LEFT, padx=6)
         # Quick recent log preview for reset target help
         ttk.Label(self.reset_frame, text="Recent commits on current branch:", font=("Helvetica", 9), style="Dialog.TLabel").pack(anchor=tk.W, pady=(12, 4))
-        self.recent_text = scrolledtext.ScrolledText(self.reset_frame, height=12, font=("Courier", 9), wrap=tk.NONE)
+        self.recent_text = scrolledtext.ScrolledText(
+            self.reset_frame, height=12, font=("Courier", 9), wrap=tk.NONE,
+            bg="#1e2228" if theme_mode == "dark" else "#ffffff",
+            fg="#e8e8e8" if theme_mode == "dark" else "#000000",
+            insertbackground="#e8e8e8" if theme_mode == "dark" else "#000000",
+        )
         self.recent_text.pack(fill=tk.BOTH, expand=True, pady=(0, 4))
         self.recent_text.configure(state="disabled")
         self._load_recent()
@@ -151,7 +156,12 @@ class ManageCommitsDialog(tk.Toplevel):
 
         # Preview area
         ttk.Label(self.delete_frame, text="Preview (will be deleted):", font=("Helvetica", 9, "bold"), style="Dialog.TLabel").pack(anchor=tk.W, pady=(8, 4))
-        self.delete_preview = scrolledtext.ScrolledText(self.delete_frame, height=14, font=("Courier", 9), wrap=tk.NONE)
+        self.delete_preview = scrolledtext.ScrolledText(
+            self.delete_frame, height=14, font=("Courier", 9), wrap=tk.NONE,
+            bg="#1e2228" if theme_mode == "dark" else "#ffffff",
+            fg="#e8e8e8" if theme_mode == "dark" else "#000000",
+            insertbackground="#e8e8e8" if theme_mode == "dark" else "#000000",
+        )
         self.delete_preview.pack(fill=tk.BOTH, expand=True)
         self.delete_preview.configure(state="disabled")
         self._update_delete_preview()
@@ -164,7 +174,7 @@ class ManageCommitsDialog(tk.Toplevel):
         button_frame.pack(fill=tk.X, side=tk.BOTTOM)
         ttk.Button(button_frame, text="Execute", command=self._on_ok, style="Dialog.TButton").pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Cancel", command=self._on_cancel, style="Dialog.TButton").pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Preview", command=self._on_preview).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="Preview", command=self._on_preview, style="Dialog.TButton").pack(side=tk.RIGHT, padx=5)
 
         self.bind("<Return>", lambda e: self._on_ok())
         self.bind("<Escape>", lambda e: self._on_cancel())
@@ -172,6 +182,10 @@ class ManageCommitsDialog(tk.Toplevel):
         x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_width() // 2)
         y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.winfo_height() // 2)
         self.geometry(f"+{x}+{y}")
+        try:
+            self.target_entry.focus_set()
+        except tk.TclError:
+            pass
 
     def _load_recent(self) -> None:
         lines = _get_commit_log(self.repo_path, "HEAD", limit=10)

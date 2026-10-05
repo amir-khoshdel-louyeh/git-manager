@@ -44,8 +44,9 @@ class SettingsDialog(tk.Toplevel):
         self.base_var = tk.StringVar(value=base_directory)
         entry_frame = ttk.Frame(repo_frame)
         entry_frame.pack(fill=tk.X, padx=12, pady=12)
-        ttk.Entry(entry_frame, textvariable=self.base_var, width=48).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(entry_frame, text="Browse", command=self._browse_base_dir).pack(side=tk.LEFT, padx=(8, 0))
+        self.base_entry = ttk.Entry(entry_frame, textvariable=self.base_var, width=48)
+        self.base_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(entry_frame, text="Browse", command=self._browse_base_dir, style="Dialog.TButton").pack(side=tk.LEFT, padx=(8, 0))
 
         startup_frame = ttk.LabelFrame(self, text="Startup behavior", style="Dialog.TLabelframe")
         startup_frame.pack(fill=tk.X, padx=20, pady=8)
@@ -164,6 +165,10 @@ class SettingsDialog(tk.Toplevel):
         x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_width() // 2)
         y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.winfo_height() // 2)
         self.geometry(f"+{x}+{y}")
+        try:
+            self.base_entry.focus_set()
+        except tk.TclError:
+            pass
 
     def _browse_base_dir(self) -> None:
         new_dir = filedialog.askdirectory(parent=self, title="Select Base Directory", initialdir=self.base_var.get())
