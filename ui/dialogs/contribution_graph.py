@@ -4,6 +4,11 @@ Same rendering as the Contributions dialog (uniform zoom, gold outline for
 planned days, hover details), but packed as a plain frame so it can live
 inside other dialogs — e.g. at the bottom of Move Commits. The big
 Contributions dialog is intentionally left untouched.
+
+The table size is LOCKED to its content: the canvas is always exactly as
+big as the drawn table needs (no viewport caps, no scrollbars, no
+stretching with the window). Zooming redraws and re-locks to the new
+exact content size.
 """
 
 from __future__ import annotations
@@ -31,11 +36,6 @@ from ui.dialogs.contributions_dialog import (
 #: Stipple dithers the shade so the contribution colors show through.
 _SHADE_FILL = "#808080"
 _SHADE_STIPPLE = "gray50"
-
-# Viewport caps so big zooms stay usable; scrollbars take over past them.
-# (Width stays below the move dialog's content width so it never stretches.)
-_MAX_W = 1220
-_MAX_H = 320
 
 
 def _parse_day(value: object) -> _date | None:
@@ -83,22 +83,19 @@ class ContributionGraph(ttk.Frame):
             side=tk.LEFT
         )
 
+        # Locked-size viewport: the frame only takes the space the canvas
+        # requests — it never stretches with the window (no fill/expand).
         canvas_frame = ttk.Frame(self, style="Dialog.TFrame")
-        canvas_frame.pack(fill=tk.BOTH, expand=True)
-        canvas_frame.columnconfigure(0, weight=1)
-        canvas_frame.rowconfigure(0, weight=1)
+        canvas_frame.pack(fill=tk.X)
         self.canvas = tk.Canvas(
             canvas_frame,
             bg="#ffffff" if theme_mode == "light" else "#0d1117",
             highlightthickness=1,
             highlightbackground="#d0d7de" if theme_mode == "light" else "#30363d",
         )
-        self.vbar = ttk.Scrollbar(canvas_frame, orient=tk.VERTICAL, command=self.canvas.yview)
-        self.hbar = ttk.Scrollbar(canvas_frame, orient=tk.HORIZONTAL, command=self.canvas.xview)
-        self.canvas.configure(xscrollcommand=self.hbar.set, yscrollcommand=self.vbar.set)
-        self.canvas.grid(row=0, column=0, sticky="nsew")
-        self.vbar.grid(row=0, column=1, sticky="ns")
-        self.hbar.grid(row=1, column=0, sticky="ew", pady=(2, 0))
+        # No scrollbars: the canvas is always exactly content-sized, so
+        # there is nothing to scroll — everything shows fully and sharply.
+        self.canvas.pack(anchor=tk.CENTER)
         self.canvas.bind("<Motion>", self._on_hover)
         self.canvas.bind("<Leave>", lambda e: self._set_status_default())
         self._set_status_default()
@@ -219,8 +216,10 @@ class ContributionGraph(ttk.Frame):
             )
         graph_w = left + 53 * step + m["pad"]
         graph_h = top + 7 * step + m["pad"]
+        # LOCKED: canvas is exactly the table size — minimum required,
+        # no caps, no scrolling, no window-stretch.
         self.canvas.configure(scrollregion=(0, 0, graph_w, graph_h))
-        self.canvas.configure(width=min(graph_w, _MAX_W), height=min(graph_h, _MAX_H))
+        self.canvas.configure(width=graph_w, height=graph_h)
         self.zoom_var.set(f"{int(round(self.zoom * 100))}%")
 
     # ------------------------------------------------------------------ hover

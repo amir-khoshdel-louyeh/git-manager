@@ -167,16 +167,15 @@ class NumericKeypadDialog(tk.Toplevel):
         content.pack(fill=tk.BOTH, expand=True)
 
         if self.show_date_options:
-            # Vertical stack: Commits to move on top (full width),
-            # Last commit + When side-by-side below it.
+            # Side-by-side: Commits to move full-height on the left,
+            # one complete box on the right holding Last commit + When.
             content.columnconfigure(0, weight=1, uniform="col")
             content.columnconfigure(1, weight=1, uniform="col")
             content.rowconfigure(0, weight=1)
-            content.rowconfigure(1, weight=0)
 
-            # ----- TOP: repository navigator + commits to move (full width) -----
+            # ----- LEFT: repository navigator + commits to move (full height) -----
             left = ttk.LabelFrame(content, text="Commits to move", padding=_px(14), style="Dialog.TLabelframe")
-            left.grid(row=0, column=0, columnspan=2, sticky="nsew", pady=_px(5))
+            left.grid(row=0, column=0, sticky="nsew", padx=(0, _px(10)), pady=_px(5))
             left.columnconfigure(0, weight=1)
             # Row offset when the repository navigator is present.
             ro = 1 if self.repo_options else 0
@@ -262,7 +261,7 @@ class NumericKeypadDialog(tk.Toplevel):
             entry_fg = "#e8e8e8" if theme_mode == "dark" else "#111827"
             self.commit_listbox = tk.Listbox(
                 list_frame,
-                height=7,
+                height=6,
                 width=_px(44),
                 font=_font("Courier", 9),
                 bg=entry_bg,
@@ -289,12 +288,12 @@ class NumericKeypadDialog(tk.Toplevel):
                 style="Dialog.TLabel",
             ).grid(row=ro + 3, column=0, sticky="w", pady=(_px(6), 0))
 
-            # ----- BOTTOM ROW: Last commit (left) + When (right) -----
-            right = ttk.Frame(content, style="Dialog.TFrame")
-            right.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(_px(5), _px(5)))
-            right.columnconfigure(0, weight=1, uniform="bcol")
-            right.columnconfigure(1, weight=1, uniform="bcol")
+            # ----- RIGHT: one complete box with Last commit (top) + When (bottom) -----
+            right = ttk.LabelFrame(content, text="Base & timing", padding=_px(12), style="Dialog.TLabelframe")
+            right.grid(row=0, column=1, sticky="nsew", pady=_px(5))
+            right.columnconfigure(0, weight=1)
             right.rowconfigure(0, weight=0)
+            right.rowconfigure(1, weight=1)
 
             # Last commit info — compact, collapsible feel
             # (StringVar-backed when switching repositories dynamically)
@@ -302,7 +301,7 @@ class NumericKeypadDialog(tk.Toplevel):
             self.info_hint_var: Optional[tk.StringVar] = None
             if self.repo_options or self.last_commit_info:
                 info_frame = ttk.LabelFrame(right, text="Last commit on base", padding=_px(10), style="Dialog.TLabelframe")
-                info_frame.grid(row=0, column=0, sticky="new", padx=(0, _px(10)))
+                info_frame.grid(row=0, column=0, sticky="ew", pady=(0, _px(10)))
                 info_frame.columnconfigure(0, weight=1)
                 if self.repo_options:
                     self.info_text_var = tk.StringVar(value=self.last_commit_info or "")
@@ -348,10 +347,10 @@ class NumericKeypadDialog(tk.Toplevel):
                     font=_font("Helvetica", 9, "italic"),
                     style="Dialog.TLabel",
                     wraplength=_px(380),
-                ).grid(row=0, column=0, sticky="new", padx=(0, _px(10)))
+                ).grid(row=0, column=0, sticky="ew")
 
             date_frame = ttk.LabelFrame(right, text="When", padding=_px(12), style="Dialog.TLabelframe")
-            date_frame.grid(row=0, column=1, sticky="new")
+            date_frame.grid(row=1, column=0, sticky="new")
             date_frame.columnconfigure(0, weight=1)
 
             self.date_mode_var = tk.StringVar(value="current")
@@ -497,7 +496,8 @@ class NumericKeypadDialog(tk.Toplevel):
             self.graph_frame = ttk.LabelFrame(self.graph_container, text="Contributions", padding=_px(10), style="Dialog.TLabelframe")
             self.graph_frame.pack(fill=tk.X)
             self.graph = ContributionGraph(self.graph_frame, theme_mode=theme_mode, initial_zoom=self.graph_zoom)
-            self.graph.pack(fill=tk.X)
+            # No fill/expand: the graph keeps its locked content size.
+            self.graph.pack(anchor=tk.CENTER)
             if self.repo_options:
                 try:
                     self.graph_frame.configure(
@@ -565,7 +565,7 @@ class NumericKeypadDialog(tk.Toplevel):
     def _prompt_for(opt: dict) -> str:
         """Prompt line for one repository option (count info is enough)."""
         if not opt.get("path"):
-            return "Select a repository to move its commits."
+            return "Select a repository to move its commits.\nNo repository selected."
         return (
             f"How many commits to move to {opt.get('base_branch')}?\n"
             f"(1 to {opt.get('pending')})"
