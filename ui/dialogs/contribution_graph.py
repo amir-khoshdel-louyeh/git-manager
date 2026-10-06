@@ -15,21 +15,27 @@ from tkinter import ttk
 from typing import Optional
 
 from core.contributions import COLORS_DARK, COLORS_LIGHT, build_grid, collect_counts
+# Table geometry is shared with the Contributions dialog itself, so the
+# embedded table is pixel-identical at the same zoom (single source).
+from ui.dialogs.contributions_dialog import (
+    _CELL,
+    _GAP,
+    _LEFT_PAD,
+    _TABLE_PAD,
+    _TOP_PAD,
+    ZOOM_MAX,
+    ZOOM_MIN,
+)
 
-_CELL = 14
-_GAP = 4
-_LEFT_PAD = 36
-_TOP_PAD = 26
 #: Shade drawn OVER unavailable days (the table underneath stays intact).
 #: Stipple dithers the shade so the contribution colors show through.
 _SHADE_FILL = "#808080"
 _SHADE_STIPPLE = "gray50"
 
-ZOOM_MIN = 0.5
-ZOOM_MAX = 3.0
 # Viewport caps so big zooms stay usable; scrollbars take over past them.
-_MAX_W = 1200
-_MAX_H = 240
+# (Width stays below the move dialog's content width so it never stretches.)
+_MAX_W = 1220
+_MAX_H = 320
 
 
 def _parse_day(value: object) -> _date | None:
@@ -45,13 +51,13 @@ def _parse_day(value: object) -> _date | None:
 class ContributionGraph(ttk.Frame):
     """A compact contribution graph with its own zoom and hover status."""
 
-    def __init__(self, parent: tk.Misc, theme_mode: str = "light", initial_zoom: float = 1.0) -> None:
+    def __init__(self, parent: tk.Misc, theme_mode: str = "light", initial_zoom: float = 2.0) -> None:
         super().__init__(parent, style="Dialog.TFrame")
         self.theme_mode = theme_mode
         try:
             self.zoom: float = min(ZOOM_MAX, max(ZOOM_MIN, float(initial_zoom)))
         except (ValueError, TypeError):
-            self.zoom = 1.0
+            self.zoom = 2.0
         self.highlight: dict[str, str] = {}
         self.cutoff: _date | None = None
         self.total: int = 0
@@ -130,6 +136,7 @@ class ContributionGraph(ttk.Frame):
 
     # ------------------------------------------------------------------ zoom
     def _metrics(self) -> dict:
+        """Scaled geometry for the current zoom (same formula as the dialog)."""
         z = self.zoom
         cell = max(2, round(_CELL * z))
         gap = max(1, round(_GAP * z))
@@ -137,9 +144,9 @@ class ContributionGraph(ttk.Frame):
             "cell": cell,
             "gap": gap,
             "step": cell + gap,
-            "left": round(_LEFT_PAD * z),
-            "top": round(_TOP_PAD * z),
-            "pad": round(8 * z),
+            "left": round(_LEFT_PAD * z) + _TABLE_PAD,
+            "top": round(_TOP_PAD * z) + _TABLE_PAD,
+            "pad": round(8 * z) + _TABLE_PAD,
             "font": max(8, round(9 * z)),
             "outline": max(2, round(z)),
         }

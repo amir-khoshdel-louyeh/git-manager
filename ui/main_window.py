@@ -1452,11 +1452,17 @@ class GitManagerGUI:
                 repo_options=candidates,
                 selected_index=selected_index,
                 graph_author=self._default_author_email(),
+                graph_zoom=self.db.get_contrib_zoom(),
             )
             _holder["dialog"] = dialog
             enable_geometry_memory(dialog, self.db, "move")
             enable_autoscale(dialog)
             self.root.wait_window(dialog)
+            try:
+                if dialog.graph is not None:
+                    self.db.set_contrib_zoom(dialog.graph.zoom)
+            except Exception:
+                pass
             num = dialog.result
             if num is None:
                 return False

@@ -86,6 +86,7 @@ class NumericKeypadDialog(tk.Toplevel):
         repo_options: Optional[list[dict]] = None,
         selected_index: int = 0,
         graph_author: str = "",
+        graph_zoom: float = 2.0,
     ) -> None:
         super().__init__(parent)
         self.title(title)
@@ -137,6 +138,7 @@ class NumericKeypadDialog(tk.Toplevel):
         )
         # Embedded contribution graph (bottom of the Move dialog).
         self.graph_author: str = graph_author or ""
+        self.graph_zoom: float = graph_zoom
         self.graph: Optional[ContributionGraph] = None
         self.graph_frame: Optional[ttk.LabelFrame] = None
         self._graph_job: Optional[str] = None
@@ -483,7 +485,7 @@ class NumericKeypadDialog(tk.Toplevel):
         if self.show_date_options:
             self.graph_frame = ttk.LabelFrame(self, text="Contributions", padding=_px(10), style="Dialog.TLabelframe")
             self.graph_frame.pack(fill=tk.X, padx=_px(20), pady=(_px(4), _px(2)))
-            self.graph = ContributionGraph(self.graph_frame, theme_mode=theme_mode, initial_zoom=1.0)
+            self.graph = ContributionGraph(self.graph_frame, theme_mode=theme_mode, initial_zoom=self.graph_zoom)
             self.graph.pack(fill=tk.X)
             if self.repo_options:
                 try:
