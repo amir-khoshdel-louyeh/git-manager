@@ -9,7 +9,7 @@ A small interactive Bash tool to manage multiple Git repositories under a single
 > New: The tool now uses the repository's real base branch when one exists, and falls back to the checked-out branch for fresh repos that do not yet have `main`.
 
 ## Requirements
-- Linux/macOS shell with Bash
+- Linux/macOS/Windows with Python 3.10+ (Tkinter included)
 - Git installed and available on `PATH`
 
 ## Layout Assumption
