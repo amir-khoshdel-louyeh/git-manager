@@ -246,9 +246,9 @@ class NumericKeypadDialog(tk.Toplevel):
             self.count_scale.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(_px(8), _px(4)))
             self.count_scale.set(maxvalue)
             ttk.Label(count_row, textvariable=self.value_var, font=_font("Helvetica", 12, "bold"), width=_px(4), anchor=tk.CENTER, style="Dialog.TLabel").pack(side=tk.LEFT)
-            ttk.Button(count_row, text="All", width=_px(6), command=self._on_select_all, style="Dialog.TButton").pack(side=tk.LEFT, padx=(_px(8), 0))
             self.of_var = tk.StringVar(value=f"of {maxvalue}")
             ttk.Label(count_row, textvariable=self.of_var, font=_font("Helvetica", 10), style="Dialog.TLabel").pack(side=tk.LEFT, padx=(_px(8), 0))
+            ttk.Button(count_row, text="All", width=_px(6), command=self._on_select_all, style="Dialog.TButton").pack(side=tk.LEFT, padx=(_px(8), 0))
 
             self.count_info_var = tk.StringVar(value="")
             ttk.Label(left, textvariable=self.count_info_var, font=_font("Helvetica", 9, "italic"), style="Dialog.TLabel").grid(row=ro + 1, column=0, sticky="w", pady=(0, _px(6)))
@@ -351,7 +351,7 @@ class NumericKeypadDialog(tk.Toplevel):
                 ).grid(row=0, column=0, sticky="ew")
 
             date_frame = ttk.LabelFrame(right, text="When", padding=_px(12), style="Dialog.TLabelframe")
-            date_frame.grid(row=1, column=0, sticky="new")
+            date_frame.grid(row=1, column=0, sticky="nsew")
             date_frame.columnconfigure(0, weight=1)
 
             self.date_mode_var = tk.StringVar(value="current")
@@ -741,9 +741,10 @@ class NumericKeypadDialog(tk.Toplevel):
             count = int(self.value_var.get()) if hasattr(self, "value_var") else 0
         except (ValueError, tk.TclError):
             count = 0
+        per_day = f" ≈ {round(count / days)}/day" if count > 0 and days > 0 else ""
         base = (
             f"{days} day(s) × {self.min_commits_per_day}–{self.max_commits_per_day}/day "
-            f"fits {lo_fit}–{hi_fit} commits."
+            f"fits {lo_fit}–{hi_fit} commits.{per_day}"
         )
         if self.minvalue > 0 and count > 0 and (count < lo_fit or count > hi_fit):
             self.range_hint_label.configure(text=f"⚠ {base} Selected: {count} — outside this fit!")
