@@ -13,6 +13,7 @@ from utils.time_utils import (
     is_future,
     now_date_str,
     now_time_str,
+    parse_hhmm,
     parse_iso_to_dt,
 )
 from ui.dialogs.contribution_graph import ContributionGraph
@@ -401,6 +402,15 @@ class NumericKeypadDialog(tk.Toplevel):
             ttk.Label(custom_frame, text="To (HH:MM):", font=_font("Helvetica", 10), style="Dialog.TLabel").grid(row=2, column=0, sticky="w", pady=_px(4), padx=(_px(4), _px(8)))
             self.custom_time_to_entry = ttk.Entry(custom_frame, textvariable=self.custom_time_to_var, width=_px(20), style="Dialog.TEntry", font=_font("Helvetica", 10), justify=tk.CENTER)
             self.custom_time_to_entry.grid(row=2, column=1, sticky="ew", pady=_px(4), padx=(0, _px(4)))
+            self.custom_hint_label = ttk.Label(
+                custom_frame,
+                text="",
+                font=_font("Helvetica", 8, "italic"),
+                style="Dialog.TLabel",
+                wraplength=_px(380),
+                justify=tk.LEFT,
+            )
+            self.custom_hint_label.grid(row=3, column=0, columnspan=2, sticky="w", pady=(_px(6), 0), padx=_px(4))
 
             range_frame = ttk.Frame(date_frame, style="Dialog.TFrame")
             range_frame.grid(row=2, column=0, sticky="ew", padx=(_px(8), 0), pady=(0, _px(2)))
@@ -437,11 +447,14 @@ class NumericKeypadDialog(tk.Toplevel):
             self.custom_date_var.trace_add("write", lambda *a: self._update_summary())
             self.custom_time_from_var.trace_add("write", lambda *a: self._update_summary())
             self.custom_time_to_var.trace_add("write", lambda *a: self._update_summary())
+            self.custom_time_from_var.trace_add("write", lambda *a: self._update_custom_hint())
+            self.custom_time_to_var.trace_add("write", lambda *a: self._update_custom_hint())
             self.value_var.trace_add("write", lambda *a: self._refresh_live())
             if self.repo_options:
                 self._select_repo(self._repo_index)
             self._refresh_commit_list()
             self._update_range_hint()
+            self._update_custom_hint()
             self._update_summary()
 
         else:
@@ -698,6 +711,23 @@ class NumericKeypadDialog(tk.Toplevel):
         """Refresh the live capacity hint under the range entries."""
         if not hasattr(self, "range_hint_label"):
             return
+        # Inverted range (start after end) is the most important problem.
+        from datetime import datetime as _dt
+
+        try:
+            start = self.range_start_date_var.get().strip() if self.range_start_date_var else ""
+            end = self.range_end_date_var.get().strip() if self.range_end_date_var else ""
+            d0 = _dt.strptime(start, "%Y-%m-%d").date()
+            d1 = _dt.strptime(end, "%Y-%m-%d").date()
+            if d1 < d0:
+                self.range_hint_label.configure(text="⚠ Start date is after end date — range is inverted.")
+                try:
+                    self.range_hint_label.configure(foreground="red")
+                except tk.TclError:
+                    pass
+                return
+        except (ValueError, AttributeError):
+            pass
         cap = self._range_capacity()
         if cap is None:
             self.range_hint_label.configure(text="Enter valid From/To dates (YYYY-MM-DD).")
@@ -814,8 +844,28 @@ class NumericKeypadDialog(tk.Toplevel):
         self._refresh_commit_list()
         self._sync_scale()
         self._update_range_hint()
+        self._update_custom_hint()
         self._update_summary()
         self._schedule_graph_refresh()
+
+    def _update_custom_hint(self) -> None:
+        """Refresh the live hint under the custom day/time entries."""
+        if not hasattr(self, "custom_hint_label"):
+            return
+        try:
+            fh, fm, _ = parse_hhmm(self.custom_time_from_var.get()) if self.custom_time_from_var else (0, 0, 0)
+            th, tm, _ = parse_hhmm(self.custom_time_to_var.get()) if self.custom_time_to_var else (0, 0, 0)
+        except (ValueError, AttributeError):
+            self.custom_hint_label.configure(text="")
+            return
+        if (fh, fm) > (th, tm):
+            self.custom_hint_label.configure(text="⚠ Start time is after end time — range is inverted.")
+            try:
+                self.custom_hint_label.configure(foreground="red")
+            except tk.TclError:
+                pass
+        else:
+            self.custom_hint_label.configure(text="")
 
     def _refresh_commit_list(self) -> None:
         """Show the first N pending commits (oldest first) in the listbox."""
