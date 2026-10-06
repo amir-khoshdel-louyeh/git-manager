@@ -936,8 +936,9 @@ class NumericKeypadDialog(tk.Toplevel):
         paths: list = []
         cutoff: Optional[str] = None
         if self.repo_options:
-            # The table always aggregates every repository; the picked repo
-            # only sets the cutoff for the shade overlay.
+            # The table aggregates ALL managed repos (all_paths from NONE);
+            # the picked repo only sets the cutoff shade. Pushed
+            # default-branch history only — local_commit never counts.
             none_opt = self.repo_options[0]
             paths = list(none_opt.get("all_paths") or
                          [c.get("path") for c in self.repo_options if c.get("path")])

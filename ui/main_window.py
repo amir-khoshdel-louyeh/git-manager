@@ -1399,6 +1399,10 @@ class GitManagerGUI:
                 continue
         if candidates:
             # NONE browses every repo's contributions; always first + default.
+            # all_paths covers ALL managed repos (not just move candidates),
+            # so the embedded graph matches the standalone Contributions view.
+            # Local `local_commit` branches are never counted — collect_counts
+            # only reads pushed default-branch history.
             candidates.insert(
                 0,
                 {
@@ -1409,7 +1413,7 @@ class GitManagerGUI:
                     "commit_items": [],
                     "last_commit_info": None,
                     "last_commit_iso": None,
-                    "all_paths": [c["path"] for c in candidates],
+                    "all_paths": [str(s.path) for s in self.states],
                 },
             )
         return candidates
