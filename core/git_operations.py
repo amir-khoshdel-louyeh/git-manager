@@ -13,14 +13,8 @@ class GitManagerError(Exception):
     """Raised for recoverable git-manager errors."""
 
 
-# Commands that require internet connectivity
-_NETWORK_GIT_COMMANDS = {"fetch", "push", "pull", "clone", "ls-remote"}
-
-
-def _requires_internet(args: Sequence[str]) -> bool:
-    return bool(args) and args[0] in _NETWORK_GIT_COMMANDS
-
-
+# Commands that require internet connectivity (kept for documentation;
+# actual pre-check removed per user request - we rely on git error output)
 def _check_internet_before_network_command(args: Sequence[str]) -> None:
     # Proactive socket check removed per user request - only check git error after command fails
     return
