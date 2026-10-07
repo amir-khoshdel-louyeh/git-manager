@@ -112,11 +112,6 @@ class GitManagerGUI:
         if detail:
             self.append_output(f"   Details: {detail}\n")
 
-    def _check_internet_or_notify(self) -> bool:
-        """Return True if online, else show error and return False."""
-        # Proactive check removed - rely on git error handling
-        return True
-
     def apply_theme(self, mode: str) -> None:
         self.theme_mode = mode
         # Delegate to centralized theme module; preserve exact previous behavior
