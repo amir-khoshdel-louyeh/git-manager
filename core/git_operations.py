@@ -13,6 +13,10 @@ class GitManagerError(Exception):
     """Raised for recoverable git-manager errors."""
 
 
+# Default timeout to avoid hanging forever on slow network commands.
+GIT_TIMEOUT = 60
+
+
 def _maybe_translate_network_error(stderr: str) -> str:
     """If stderr looks like a network failure, prepend message."""
     from utils.network import NO_INTERNET_MSG, is_network_error_message
