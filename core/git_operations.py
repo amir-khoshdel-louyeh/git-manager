@@ -35,7 +35,6 @@ class GitOperations:
     @staticmethod
     def run_git(args: Sequence[str], *, cwd: Path) -> str:
         """Run a git command and return stdout; raise on failure."""
-        _check_internet_before_network_command(args)
         result = subprocess.run(
             ["git", *args],
             cwd=str(cwd),
