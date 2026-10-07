@@ -13,13 +13,6 @@ class GitManagerError(Exception):
     """Raised for recoverable git-manager errors."""
 
 
-# Commands that require internet connectivity (kept for documentation;
-# actual pre-check removed per user request - we rely on git error output)
-def _check_internet_before_network_command(args: Sequence[str]) -> None:
-    # Proactive socket check removed per user request - only check git error after command fails
-    return
-
-
 def _maybe_translate_network_error(stderr: str) -> str:
     """If stderr looks like a network failure, prepend message."""
     from utils.network import NO_INTERNET_MSG, is_network_error_message
