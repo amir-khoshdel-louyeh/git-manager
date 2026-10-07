@@ -52,7 +52,6 @@ class GitOperations:
     @staticmethod
     def run_git_env(args: Sequence[str], *, cwd: Path, extra_env: dict[str, str]) -> str:
         """Run git with additional environment variables."""
-        _check_internet_before_network_command(args)
         env = os.environ.copy()
         env.update(extra_env)
         result = subprocess.run(
