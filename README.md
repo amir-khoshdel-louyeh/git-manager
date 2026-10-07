@@ -28,8 +28,7 @@ You can override the scan root:
 
 ## Quick Start
 ```bash
-chmod +x push.sh
-./push.sh
+python3 main.py
 ```
 
 - Enter a repository number to manage it, or `0` to quit.
