@@ -52,18 +52,23 @@ class GitOperations:
         return result.stdout
 
     @staticmethod
-    def run_git_env(args: Sequence[str], *, cwd: Path, extra_env: dict[str, str]) -> str:
+    def run_git_env(args: Sequence[str], *, cwd: Path, extra_env: dict[str, str], timeout: int = GIT_TIMEOUT) -> str:
         """Run git with additional environment variables."""
         env = os.environ.copy()
         env.update(extra_env)
-        result = subprocess.run(
-            ["git", *args],
-            cwd=str(cwd),
-            check=False,
-            text=True,
-            capture_output=True,
-            env=env,
-        )
+        try:
+            result = subprocess.run(
+                ["git", *args],
+                cwd=str(cwd),
+                check=False,
+                text=True,
+                capture_output=True,
+                env=env,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            quoted = " ".join(shlex.quote(a) for a in args)
+            raise GitManagerError(f"git {quoted} timed out after {timeout}s in {cwd}") from exc
         if result.returncode != 0:
             stderr = result.stderr.strip() or result.stdout.strip()
             stderr = _maybe_translate_network_error(stderr)
