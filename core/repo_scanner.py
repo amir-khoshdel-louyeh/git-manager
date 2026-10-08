@@ -45,10 +45,10 @@ def _detect_base_branch(repo: Path, current_branch: str) -> str:
 
 def _ensure_main_branch(repo: Path, current_branch: str) -> str:
     """Create a real main branch from a safe existing branch if needed."""
-    if GitOperations.git_ok(["show-ref", "--verify", "--quiet", "refs/heads/main"], cwd=repo):
+    if _has_ref(repo, "refs/heads/main"):
         return "main"
 
-    if GitOperations.git_ok(["show-ref", "--verify", "--quiet", "refs/heads/master"], cwd=repo):
+    if _has_ref(repo, "refs/heads/master"):
         try:
             GitOperations.run_git(["branch", "main", "master"], cwd=repo)
             return "main"
