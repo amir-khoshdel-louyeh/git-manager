@@ -77,12 +77,16 @@ class GitOperations:
         return result.stdout
 
     @staticmethod
-    def git_ok(args: Sequence[str], *, cwd: Path) -> bool:
+    def git_ok(args: Sequence[str], *, cwd: Path, timeout: int = GIT_TIMEOUT) -> bool:
         """Return True when git exits with status 0."""
-        result = subprocess.run(
-            ["git", *args],
-            cwd=str(cwd),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        try:
+            result = subprocess.run(
+                ["git", *args],
+                cwd=str(cwd),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return False
         return result.returncode == 0
