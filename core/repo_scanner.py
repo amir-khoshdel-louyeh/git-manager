@@ -14,17 +14,25 @@ def _has_ref(repo: Path, ref: str) -> bool:
     return GitOperations.git_ok(["show-ref", "--verify", "--quiet", ref], cwd=repo)
 
 
+def _get_origin_head(repo: Path) -> str:
+    """Return origin/HEAD target (e.g. origin/main) or empty string.
+
+    Single git call instead of git_ok + run_git pair.
+    """
+    try:
+        head = GitOperations.run_git(["rev-parse", "--abbrev-ref", "origin/HEAD"], cwd=repo).strip()
+    except GitManagerError:
+        return ""
+    return head if head and head != "HEAD" else ""
+
+
 def _detect_base_branch(repo: Path, current_branch: str) -> str:
     if _has_ref(repo, "refs/heads/main"):
         return "main"
     if _has_ref(repo, "refs/heads/master"):
         return "master"
 
-    origin_head = (
-        GitOperations.run_git(["rev-parse", "--abbrev-ref", "origin/HEAD"], cwd=repo).strip()
-        if GitOperations.git_ok(["rev-parse", "--abbrev-ref", "origin/HEAD"], cwd=repo)
-        else ""
-    )
+    origin_head = _get_origin_head(repo)
     if origin_head and origin_head != "HEAD":
         return origin_head.removeprefix("origin/")
 
