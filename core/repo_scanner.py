@@ -9,10 +9,15 @@ from core.git_operations import GitManagerError, GitOperations
 from core.repo_state import RepoState
 
 
+def _has_ref(repo: Path, ref: str) -> bool:
+    """Single place for ref existence checks (all git calls now have timeout)."""
+    return GitOperations.git_ok(["show-ref", "--verify", "--quiet", ref], cwd=repo)
+
+
 def _detect_base_branch(repo: Path, current_branch: str) -> str:
-    if GitOperations.git_ok(["show-ref", "--verify", "--quiet", "refs/heads/main"], cwd=repo):
+    if _has_ref(repo, "refs/heads/main"):
         return "main"
-    if GitOperations.git_ok(["show-ref", "--verify", "--quiet", "refs/heads/master"], cwd=repo):
+    if _has_ref(repo, "refs/heads/master"):
         return "master"
 
     origin_head = (
