@@ -28,8 +28,8 @@ def _detect_base_branch(repo: Path, current_branch: str) -> str:
     if origin_head and origin_head != "HEAD":
         return origin_head.removeprefix("origin/")
 
-    if current_branch and current_branch not in {"HEAD", "local_commit"} and GitOperations.git_ok(
-        ["show-ref", "--verify", "--quiet", f"refs/heads/{current_branch}"], cwd=repo
+    if current_branch and current_branch not in {"HEAD", "local_commit"} and _has_ref(
+        repo, f"refs/heads/{current_branch}"
     ):
         return current_branch
     return ""
