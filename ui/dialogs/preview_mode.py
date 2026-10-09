@@ -33,7 +33,7 @@ class PreviewModeDialog(tk.Toplevel):
 
         cancel_frame = ttk.Frame(self, style="Dialog.TFrame")
         cancel_frame.pack(padx=20, pady=(0, 16), fill=tk.X)
-        ttk.Button(cancel_frame, text="Cancel", command=self._on_cancel, style="Dialog.TButton").pack(side=tk.RIGHT)
+        ttk.Button(cancel_frame, text="Cancel", command=self._on_cancel, style="Dialog.TButton", width=12).pack(side=tk.RIGHT, padx=5)
 
         self.bind("<Escape>", lambda e: self._on_cancel())
         self.update_idletasks()
