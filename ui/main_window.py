@@ -290,9 +290,7 @@ class GitManagerGUI:
         buttons = ttk.Frame(self.root, padding=8)
         buttons.pack(fill=tk.X, padx=12, pady=12)
         
-        style = ttk.Style()
-        style.configure("Action.TButton", font=("Helvetica", 10, "bold"), padding=8)
-        
+        # Action buttons use Action.TButton from theme.py (single source of truth)
         ttk.Button(buttons, text="🔄 Refresh", command=self.refresh_repos, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
         ttk.Button(buttons, text="🔀 Switch Branch", command=self.action_switch, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
         ttk.Button(buttons, text="👁 Preview Commits", command=self.action_preview, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
