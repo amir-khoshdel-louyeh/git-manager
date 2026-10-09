@@ -114,7 +114,7 @@ def apply_theme(
     )
     style.configure("Dialog.TFrame", background=frame_bg)
     style.configure("Dialog.TLabel", background=frame_bg, foreground=fg)
-    style.configure("Dialog.TButton", font=("Helvetica", button_font_size), background=button_bg, foreground=fg)
+    style.configure("Dialog.TButton", font=("Helvetica", button_font_size, "bold"), background=button_bg, foreground=fg, padding=max(6, button_font_size // 1))
     style.map("Dialog.TButton",
         background=[('active', button_active), ('pressed', button_active), ('!disabled', button_bg)],
         foreground=[('disabled', '#888888'), ('!disabled', fg)]
