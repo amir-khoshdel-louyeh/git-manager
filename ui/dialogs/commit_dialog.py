@@ -66,8 +66,8 @@ class CommitDialog(tk.Toplevel):
 
         button_frame = ttk.Frame(self, style="Dialog.TFrame")
         button_frame.pack(pady=10)
-        ttk.Button(button_frame, text="Commit", command=self._on_ok, style="Dialog.TButton").pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=self._on_cancel, style="Dialog.TButton").pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Commit", command=self._on_ok, style="Dialog.TButton", width=12).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=self._on_cancel, style="Dialog.TButton", width=12).pack(side=tk.LEFT, padx=5)
 
         self.bind("<Return>", lambda e: self._on_ok())
         self.bind("<Escape>", lambda e: self._on_cancel())
