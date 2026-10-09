@@ -172,9 +172,9 @@ class ManageCommitsDialog(tk.Toplevel):
         # Buttons
         button_frame = ttk.Frame(self, style="Dialog.TFrame", padding=12)
         button_frame.pack(fill=tk.X, side=tk.BOTTOM)
-        ttk.Button(button_frame, text="Execute", command=self._on_ok, style="Dialog.TButton").pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=self._on_cancel, style="Dialog.TButton").pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Preview", command=self._on_preview, style="Dialog.TButton").pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="Execute", command=self._on_ok, style="Dialog.TButton", width=12).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=self._on_cancel, style="Dialog.TButton", width=12).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Preview", command=self._on_preview, style="Dialog.TButton", width=12).pack(side=tk.RIGHT, padx=5)
 
         self.bind("<Return>", lambda e: self._on_ok())
         self.bind("<Escape>", lambda e: self._on_cancel())
