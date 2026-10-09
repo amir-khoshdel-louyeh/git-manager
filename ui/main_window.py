@@ -291,7 +291,6 @@ class GitManagerGUI:
         buttons.pack(fill=tk.X, padx=12, pady=12)
         
         # Action buttons use Action.TButton from theme.py (single source of truth)
-        style = ttk.Style()
         ttk.Button(buttons, text="🔄 Refresh", command=self.refresh_repos, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
         ttk.Button(buttons, text="🔀 Switch Branch", command=self.action_switch, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
         ttk.Button(buttons, text="👁 Preview Commits", command=self.action_preview, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
@@ -310,8 +309,7 @@ class GitManagerGUI:
         tree_frame = ttk.Frame(paned)
         paned.add(tree_frame, weight=1)
         ttk.Label(tree_frame, text="📊 Repositories", font=("Helvetica", 11, "bold")).pack(anchor=tk.W, pady=(0, 8))
-        style.configure("Treeview", font=("Helvetica", 10), rowheight=28)
-        style.configure("Treeview.Heading", font=("Helvetica", 10, "bold"))
+        # Treeview styling comes from theme.py (single source of truth)
         tree_container = ttk.Frame(tree_frame)
         tree_container.pack(fill=tk.BOTH, expand=True)
         self.tree = ttk.Treeview(
