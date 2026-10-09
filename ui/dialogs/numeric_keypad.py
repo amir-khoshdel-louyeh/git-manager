@@ -499,7 +499,7 @@ class NumericKeypadDialog(tk.Toplevel):
                 row_frame = ttk.Frame(keypad_frame, style="Dialog.TFrame")
                 row_frame.grid(row=r, column=0, pady=_px(3))
                 for c, btn_text in enumerate(row):
-                    btn = ttk.Button(row_frame, text=btn_text, width=_px(8), command=lambda t=btn_text: self._on_key(t))
+                    btn = ttk.Button(row_frame, text=btn_text, width=_px(8), command=lambda t=btn_text: self._on_key(t), style="Dialog.TButton")
                     btn.grid(row=0, column=c, padx=_px(5), pady=_px(3), ipadx=_px(4), ipady=_px(10))
 
         # ---------- contributions box (always visible, fixed height) ----------
