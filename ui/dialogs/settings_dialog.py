@@ -26,12 +26,14 @@ class SettingsDialog(tk.Toplevel):
         min_commits_per_day: int = 1,
         max_commits_per_day: int = 10,
         busy_workdays: bool = False,
+        default_base_branch: str = "main",
     ) -> None:
         super().__init__(parent)
         self.title("Settings")
         self.resizable(True, True)
-        self.result: Optional[tuple[str, bool, str, bool, int, int, int, int, str, str, int, int, bool]] = None
+        self.result: Optional[tuple] = None
         self.theme_mode = theme_mode
+        self.repos_changed = False
 
         dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
         self.configure(bg=dialog_bg)
@@ -153,6 +155,22 @@ class SettingsDialog(tk.Toplevel):
             style="Dialog.TCheckbutton",
         ).pack(anchor=tk.W, padx=12, pady=(4, 12))
 
+        new_repo_frame = ttk.LabelFrame(self, text="New repositories", style="Dialog.TLabelframe")
+        new_repo_frame.pack(fill=tk.X, padx=20, pady=8)
+        self.default_branch_var = tk.StringVar(value=default_base_branch or "main")
+        new_repo_row = ttk.Frame(new_repo_frame, style="Dialog.TFrame")
+        new_repo_row.pack(fill=tk.X, padx=12, pady=12)
+        ttk.Label(new_repo_row, text="Default base:", font=("Helvetica", 10), style="Dialog.TLabel").pack(side=tk.LEFT)
+        ttk.Entry(new_repo_row, textvariable=self.default_branch_var, width=12, style="Dialog.TEntry", justify=tk.CENTER).pack(side=tk.LEFT, padx=(8, 16))
+        ttk.Button(new_repo_row, text="➕ New Repository…", command=self._open_new_repo, style="Dialog.TButton").pack(side=tk.RIGHT)
+        ttk.Label(
+            new_repo_frame,
+            text="Clone from URL or set up repos you added manually (suggestions open in a separate window).",
+            font=("Helvetica", 8, "italic"),
+            style="Dialog.TLabel",
+            wraplength=420,
+        ).pack(anchor=tk.W, padx=12, pady=(0, 12))
+
         button_frame = ttk.Frame(self, style="Dialog.TFrame")
         button_frame.pack(pady=16)
         ttk.Button(button_frame, text="Save", command=self._on_ok, style="Dialog.TButton", width=12).pack(side=tk.LEFT, padx=5)
@@ -174,6 +192,27 @@ class SettingsDialog(tk.Toplevel):
         new_dir = filedialog.askdirectory(parent=self, title="Select Base Directory", initialdir=self.base_var.get())
         if new_dir:
             self.base_var.set(new_dir)
+
+    def _open_new_repo(self) -> None:
+        from ui.dialogs.new_repo_dialog import NewRepoDialog
+
+        try:
+            mode = self.theme_mode.get()  # type: ignore[union-attr]
+        except Exception:
+            mode = "light"
+        if not isinstance(mode, str):
+            mode = "light"
+        dialog = NewRepoDialog(
+            self,
+            self.base_var.get().strip(),
+            (self.default_branch_var.get().strip() or "main"),
+            mode,
+        )
+        # Geometry memory / autoscale intentionally skipped for child dialog
+        # to avoid grab conflicts; it centers on this dialog itself.
+        self.wait_window(dialog)
+        if getattr(dialog, "changed", False):
+            self.repos_changed = True
 
     def _on_ok(self) -> None:
         base = self.base_var.get().strip()
@@ -232,6 +271,13 @@ class SettingsDialog(tk.Toplevel):
             messagebox.showerror("Invalid daily limits", "Min commits per day must not exceed max.", parent=self)
             return
 
+        default_branch = self.default_branch_var.get().strip() or "main"
+        import re as _re2
+
+        if not _re2.fullmatch(r"[A-Za-z0-9._/-]+", default_branch):
+            messagebox.showerror("Invalid base branch", "Default base branch name looks invalid.", parent=self)
+            return
+
         self.result = (
             base,
             self.auto_switch_var.get(),
@@ -246,6 +292,7 @@ class SettingsDialog(tk.Toplevel):
             min_per_day,
             max_per_day,
             self.busy_workdays_var.get(),
+            default_branch,
         )
         self.destroy()
 

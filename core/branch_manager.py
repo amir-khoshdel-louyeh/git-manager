@@ -16,48 +16,38 @@ class BranchManager:
 
     @staticmethod
     def switch_to_local_commit(repo: Path, base_branch: str, current_branch: str | None = None) -> str:
-        """Switch to local_commit, creating it from a sensible start point if missing."""
+        """Switch to local_commit, creating it from the base branch if missing.
+
+        Strict rule: never create local_commit when the repo has no real base
+        branch. Fallbacks to current_branch/HEAD/origin-HEAD are intentionally
+        NOT used anymore, because they produced a local_commit without main.
+        """
         if GitOperations.git_ok(["show-ref", "--verify", "--quiet", "refs/heads/local_commit"], cwd=repo):
             GitOperations.run_git(["checkout", "local_commit"], cwd=repo)
             return "local_commit"
 
-        # Guard empty strings to avoid malformed refs like refs/heads/
-        start_ref: str | None = base_branch if base_branch else None
-        if start_ref:
-            if not GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{start_ref}"], cwd=repo):
-                start_ref = current_branch if current_branch else None
-        else:
-            start_ref = current_branch if current_branch else None
+        if not base_branch:
+            raise GitManagerError(
+                "Cannot create local_commit – base branch not detected (main/master missing). "
+                "Create/push main first, then switch."
+            )
 
-        if start_ref and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{start_ref}"], cwd=repo):
-            GitOperations.run_git(["checkout", "-b", "local_commit", start_ref], cwd=repo)
+        # Preferred: local base branch must exist.
+        if GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{base_branch}"], cwd=repo):
+            GitOperations.run_git(["checkout", "-b", "local_commit", base_branch], cwd=repo)
             return "local_commit"
 
-        if base_branch and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/remotes/origin/{base_branch}"], cwd=repo):
-            GitOperations.run_git(["checkout", "-b", "local_commit", f"origin/{base_branch}"], cwd=repo)
+        # Fallback: remote base exists but local base not yet created.
+        # Materialize the local base first so local_commit always has a main.
+        if GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/remotes/origin/{base_branch}"], cwd=repo):
+            GitOperations.run_git(["checkout", "-b", base_branch, f"origin/{base_branch}"], cwd=repo)
+            GitOperations.run_git(["checkout", "-b", "local_commit", base_branch], cwd=repo)
             return "local_commit"
 
-        # Try origin/HEAD as additional fallback before creating from HEAD
-        if GitOperations.git_ok(["show-ref", "--verify", "--quiet", "refs/remotes/origin/HEAD"], cwd=repo):
-            try:
-                remote_head = GitOperations.run_git(["rev-parse", "--abbrev-ref", "origin/HEAD"], cwd=repo).strip()
-                if remote_head and remote_head != "HEAD" and GitOperations.git_ok(
-                    ["show-ref", "--verify", "--quiet", f"refs/remotes/{remote_head}"], cwd=repo
-                ):
-                    GitOperations.run_git(["checkout", "-b", "local_commit", remote_head], cwd=repo)
-                    return "local_commit"
-            except GitManagerError:
-                pass
-
-        if current_branch and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{current_branch}"], cwd=repo):
-            GitOperations.run_git(["checkout", "-b", "local_commit", current_branch], cwd=repo)
-            return "local_commit"
-
-        if GitOperations.git_ok(["rev-parse", "--verify", "--quiet", "HEAD"], cwd=repo):
-            GitOperations.run_git(["checkout", "-b", "local_commit"], cwd=repo)
-            return "local_commit"
-
-        raise GitManagerError("Cannot create local_commit – no valid start point (base_branch empty and no local/remote branch)")
+        raise GitManagerError(
+            f"Cannot create local_commit – base branch '{base_branch}' not found locally or on origin. "
+            "Create/push it first."
+        )
 
     @staticmethod
     def switch_to_base(repo: Path, base_branch: str) -> str:

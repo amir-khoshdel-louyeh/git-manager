@@ -422,11 +422,12 @@ class GitManagerGUI:
         """Switch all repositories to local_commit branch.
 
         Strict workflow (new repo):
-        1) Prerequisite origin/main must exist first before any automation.
-        2) If local_commit does NOT exist → create it ONLY upon open/close if origin/main exists.
-        3) If local_commit already exists → do not re-create, just proceed (checkout if needed).
-        Under no circumstances will we attempt to trigger/create local_commit during
-        open/close until origin/main is confirmed for newly created repositories.
+        1) Prerequisite: a real base branch must be detected (main/master/origin/HEAD).
+        2) Prerequisite: local base must exist, or be materializable from origin.
+           We never leave a repo with local_commit but without main.
+        3) If local_commit does NOT exist → create it ONLY when 1+2 hold.
+        4) If local_commit already exists → just checkout, do not re-create.
+        New repos without main are skipped with a clear message.
         """
         if not self.states:
             return
@@ -439,15 +440,41 @@ class GitManagerGUI:
                 try:
                     # Live checks (state may be stale)
                     local_exists = self._has_local_commit(state.path)
-                    has_origin_main = self._has_origin_main(state.path)
 
-                    # Key Rule: never attempt to create local_commit during open/close
-                    # until origin/main is confirmed for this repo.
-                    if not local_exists and not has_origin_main:
+                    # Key Rule 1: no detected base → never create local_commit.
+                    # This is the "new repo without main" case.
+                    if not local_exists and not state.base_branch:
                         self.append_output(
-                            f"  ⏭ {state.name}: origin/main not found — skipping local_commit creation (prerequisite)\n"
+                            f"  ⏭ {state.name}: no base branch detected (main/master missing) — "
+                            f"skipping local_commit creation. Create/push main first.\n"
                         )
                         continue
+
+                    # Key Rule 2: local base must exist or be materializable from origin.
+                    # Key Rule 2b: auto-creation needs a REAL base (main/master or origin).
+                    # If base is just the current-branch fallback (e.g. only 'feature',
+                    # no main/master, no origin) do NOT auto-create in bulk open/close.
+                    if not local_exists and state.base_branch:
+                        has_local_base = GitOperations.git_ok(
+                            ["show-ref", "--verify", "--quiet", f"refs/heads/{state.base_branch}"],
+                            cwd=state.path,
+                        )
+                        has_origin_base = GitOperations.git_ok(
+                            ["show-ref", "--verify", "--quiet", f"refs/remotes/origin/{state.base_branch}"],
+                            cwd=state.path,
+                        )
+                        if not has_local_base and not has_origin_base:
+                            self.append_output(
+                                f"  ⏭ {state.name}: base '{state.base_branch}' not found locally or on origin — "
+                                f"skipping local_commit creation.\n"
+                            )
+                            continue
+                        if state.base_branch not in {"main", "master"} and not has_origin_base:
+                            self.append_output(
+                                f"  ⏭ {state.name}: base '{state.base_branch}' is not main/master and has no origin — "
+                                f"skipping auto-creation. Create main first or switch manually.\n"
+                            )
+                            continue
 
                     if state.current_branch != "local_commit":
                         if local_exists:
@@ -455,8 +482,10 @@ class GitManagerGUI:
                             BranchManager.checkout(state.path, "local_commit")
                             self.append_output(f"  ✓ {state.name}: switched to local_commit\n")
                         else:
-                            # local_commit does NOT exist → create upon open/close (prerequisite already ensured)
-                            BranchManager.switch_to_local_commit(state.path, state.base_branch)
+                            # local_commit does NOT exist → create (base already validated above)
+                            BranchManager.switch_to_local_commit(
+                                state.path, state.base_branch, state.current_branch
+                            )
                             self.append_output(f"  ✓ {state.name}: created and switched to local_commit\n")
                     else:
                         self.append_output(f"  ✓ {state.name}: already on local_commit\n")
@@ -811,14 +840,21 @@ class GitManagerGUI:
             self.min_commits_per_day,
             self.max_commits_per_day,
             self.busy_workdays,
+            self.db.get_default_base_branch(),
         )
         enable_geometry_memory(dialog, self.db, "settings")
         enable_autoscale(dialog)
         self.root.wait_window(dialog)
         if dialog.result is None:
+            # Repos may still have been cloned/set up via the New Repository
+            # child window even when Settings itself was cancelled.
+            if getattr(dialog, "repos_changed", False):
+                self.refresh_repos()
+                self.append_output("✅ Repositories updated via New Repository window.\n")
             return
 
-        new_base, auto_switch, theme_mode, auto_refresh_enabled, refresh_interval, output_font_size, table_font_size, button_font_size, work_start, work_end, min_per_day, max_per_day, busy_workdays = dialog.result
+        new_base, auto_switch, theme_mode, auto_refresh_enabled, refresh_interval, output_font_size, table_font_size, button_font_size, work_start, work_end, min_per_day, max_per_day, busy_workdays, *rest = dialog.result
+        default_branch = rest[0] if rest else self.db.get_default_base_branch()
         self.base_var.set(new_base)
         self.auto_switch_to_local_commit = auto_switch
         self.auto_refresh_enabled = auto_refresh_enabled
@@ -845,6 +881,7 @@ class GitManagerGUI:
         self.db.set_min_commits_per_day(min_per_day)
         self.db.set_max_commits_per_day(max_per_day)
         self.db.set_busy_workdays(busy_workdays)
+        self.db.set_default_base_branch(default_branch)
 
         self.append_output(f"💾 Settings saved. Base directory: {new_base}\n")
         self.apply_theme(self.theme_mode)
@@ -883,7 +920,13 @@ class GitManagerGUI:
                 BranchManager.switch_to_base(state.path, state.base_branch)
                 new_branch = state.base_branch
             else:
-                # Pass current_branch so branch_manager can handle empty base_branch safely
+                # Manual switch: refuse to create local_commit without a real base.
+                # BranchManager raises the same error, but we fail fast with a clear message.
+                if not state.base_branch:
+                    raise GitManagerError(
+                        "Base branch not detected (main/master missing) – "
+                        "create/push main first, then switch to local_commit."
+                    )
                 BranchManager.switch_to_local_commit(state.path, state.base_branch, state.current_branch)
                 new_branch = "local_commit"
             # Restore stashed changes after successful checkout, if any

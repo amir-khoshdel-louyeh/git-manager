@@ -205,6 +205,14 @@ class SettingsDB:
         """Save the busy-workdays preference."""
         self.set("busy_workdays", "1" if enabled else "0")
 
+    def get_default_base_branch(self) -> str:
+        """Return the default base branch name for new repositories."""
+        return self.get("default_base_branch", default="main") or "main"
+
+    def set_default_base_branch(self, name: str) -> None:
+        """Save the default base branch name for new repositories."""
+        self.set("default_base_branch", (name or "main").strip() or "main")
+
     # --- dialog geometry memory ------------------------------------------
 
     def get_dialog_geometry(self, name: str) -> Optional[str]:
