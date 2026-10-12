@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import messagebox, ttk, scrolledtext
+from tkinter import messagebox, ttk
 from pathlib import Path
 from typing import Optional
 
 from core.git_operations import GitManagerError, GitOperations
+from ui import scaling
+from ui.theme import get_theme
 
 
 def _get_commit_log(repo: Path, ref: str, limit: int = 15) -> list[str]:
@@ -28,6 +30,28 @@ def _get_commit_count(repo: Path, ref: str) -> int:
         return int(out.strip() or "0")
     except GitManagerError:
         return 0
+
+
+def _scrolled_text(parent: tk.Misc, *, height: int, colors: dict[str, str]) -> tuple[ttk.Frame, tk.Text]:
+    """Themed read-only-friendly text area with a ttk scrollbar."""
+    frame = ttk.Frame(parent, style="Dialog.TFrame")
+    text = tk.Text(
+        frame,
+        height=height,
+        font=("Courier", 9),
+        wrap=tk.NONE,
+        bg=colors["text_bg"],
+        fg=colors["fg"],
+        insertbackground=colors["fg"],
+        relief=tk.FLAT,
+        borderwidth=0,
+        highlightthickness=0,
+    )
+    scroll = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=text.yview)
+    text.configure(yscrollcommand=scroll.set)
+    text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    scroll.pack(side=tk.RIGHT, fill=tk.Y)
+    return frame, text
 
 
 class ManageCommitsDialog(tk.Toplevel):
@@ -55,8 +79,6 @@ class ManageCommitsDialog(tk.Toplevel):
         self.result: Optional[dict] = None
 
         self.title(f"Manage commits — {repo_name}")
-        self.geometry("920x820")
-        self.minsize(880, 680)
         self.transient(parent)
         self.grab_set()
         try:
@@ -64,20 +86,22 @@ class ManageCommitsDialog(tk.Toplevel):
         except tk.TclError:
             pass
 
-        dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
-        self.configure(bg=dialog_bg)
+        colors = get_theme(theme_mode)
+        self.configure(bg=colors["frame_bg"])
+        scaling.fit_window(self, 920, 820, min_width=680, min_height=520)
 
-        header = ttk.Frame(self, style="Dialog.TFrame", padding=(20, 12, 20, 8))
+        px = scaling.px
+        header = ttk.Frame(self, style="Dialog.TFrame", padding=(px(20), px(12), px(20), px(8)))
         header.pack(fill=tk.X)
         info = f"Base: {base_branch or '(none)'}  •  Current: {current_branch}  •  Pending: {pending_count}"
         ttk.Label(header, text=info, font=("Helvetica", 9, "bold"), style="Dialog.TLabel").pack(anchor=tk.W)
         if local_exists:
             ttk.Label(header, text="local_commit exists", font=("Helvetica", 8), style="Dialog.TLabel").pack(anchor=tk.W)
-        ttk.Separator(self, orient="horizontal").pack(fill=tk.X, padx=20, pady=8)
+        ttk.Separator(self, orient="horizontal").pack(fill=tk.X, padx=px(20), pady=px(8))
 
         # Mode selection
         self.mode_var = tk.StringVar(value="reset")
-        mode_frame = ttk.Frame(self, style="Dialog.TFrame", padding=(20, 0, 20, 8))
+        mode_frame = ttk.Frame(self, style="Dialog.TFrame", padding=(px(20), 0, px(20), px(8)))
         mode_frame.pack(fill=tk.X)
         ttk.Label(mode_frame, text="Operation:", font=("Helvetica", 10, "bold"), style="Dialog.TLabel").pack(anchor=tk.W, pady=(0, 6))
         ttk.Radiobutton(mode_frame, text="Reset to target (soft/mixed/hard)", variable=self.mode_var, value="reset", command=self._on_mode_change, style="Dialog.TRadiobutton").pack(anchor=tk.W)
@@ -85,7 +109,7 @@ class ManageCommitsDialog(tk.Toplevel):
 
         # Container for mode-specific UI
         self.container = ttk.Frame(self, style="Dialog.TFrame")
-        self.container.pack(fill=tk.BOTH, expand=True, padx=20, pady=8)
+        self.container.pack(fill=tk.BOTH, expand=True, padx=px(20), pady=px(8))
 
         # --- Reset mode frame ---
         self.reset_frame = ttk.Frame(self.container, style="Dialog.TFrame")
@@ -105,13 +129,8 @@ class ManageCommitsDialog(tk.Toplevel):
             ttk.Radiobutton(types_frame, text=t.capitalize(), variable=self.reset_type, value=t, style="Dialog.TRadiobutton").pack(side=tk.LEFT, padx=6)
         # Quick recent log preview for reset target help
         ttk.Label(self.reset_frame, text="Recent commits on current branch:", font=("Helvetica", 9), style="Dialog.TLabel").pack(anchor=tk.W, pady=(12, 4))
-        self.recent_text = scrolledtext.ScrolledText(
-            self.reset_frame, height=12, font=("Courier", 9), wrap=tk.NONE,
-            bg="#1e2228" if theme_mode == "dark" else "#ffffff",
-            fg="#e8e8e8" if theme_mode == "dark" else "#000000",
-            insertbackground="#e8e8e8" if theme_mode == "dark" else "#000000",
-        )
-        self.recent_text.pack(fill=tk.BOTH, expand=True, pady=(0, 4))
+        self.recent_frame, self.recent_text = _scrolled_text(self.reset_frame, height=12, colors=colors)
+        self.recent_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 4))
         self.recent_text.configure(state="disabled")
         self._load_recent()
 
@@ -156,13 +175,8 @@ class ManageCommitsDialog(tk.Toplevel):
 
         # Preview area
         ttk.Label(self.delete_frame, text="Preview (will be deleted):", font=("Helvetica", 9, "bold"), style="Dialog.TLabel").pack(anchor=tk.W, pady=(8, 4))
-        self.delete_preview = scrolledtext.ScrolledText(
-            self.delete_frame, height=14, font=("Courier", 9), wrap=tk.NONE,
-            bg="#1e2228" if theme_mode == "dark" else "#ffffff",
-            fg="#e8e8e8" if theme_mode == "dark" else "#000000",
-            insertbackground="#e8e8e8" if theme_mode == "dark" else "#000000",
-        )
-        self.delete_preview.pack(fill=tk.BOTH, expand=True)
+        self.preview_frame, self.delete_preview = _scrolled_text(self.delete_frame, height=14, colors=colors)
+        self.preview_frame.pack(fill=tk.BOTH, expand=True)
         self.delete_preview.configure(state="disabled")
         self._update_delete_preview()
 
@@ -170,18 +184,15 @@ class ManageCommitsDialog(tk.Toplevel):
         self._on_mode_change()
 
         # Buttons
-        button_frame = ttk.Frame(self, style="Dialog.TFrame", padding=12)
+        button_frame = ttk.Frame(self, style="Dialog.TFrame", padding=px(12))
         button_frame.pack(fill=tk.X, side=tk.BOTTOM)
-        ttk.Button(button_frame, text="Execute", command=self._on_ok, style="Dialog.TButton", width=12).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=self._on_cancel, style="Dialog.TButton", width=12).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Preview", command=self._on_preview, style="Dialog.TButton", width=12).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="Execute", command=self._on_ok, style="DialogPrimary.TButton", width=12).pack(side=tk.LEFT, padx=px(5))
+        ttk.Button(button_frame, text="Cancel", command=self._on_cancel, style="Dialog.TButton", width=12).pack(side=tk.LEFT, padx=px(5))
+        ttk.Button(button_frame, text="Preview", command=self._on_preview, style="Dialog.TButton", width=12).pack(side=tk.RIGHT, padx=px(5))
 
         self.bind("<Return>", lambda e: self._on_ok())
         self.bind("<Escape>", lambda e: self._on_cancel())
-        self.update_idletasks()
-        x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_width() // 2)
-        y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.winfo_height() // 2)
-        self.geometry(f"+{x}+{y}")
+        scaling.center_on_parent(self, parent)
         try:
             self.target_entry.focus_set()
         except tk.TclError:

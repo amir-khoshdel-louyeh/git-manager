@@ -11,7 +11,7 @@ from pathlib import Path
 COLORS_LIGHT = ("#ebedf0", "#9be9a8", "#40c463", "#30a14e", "#216e39")
 COLORS_DARK = ("#161b22", "#0e4429", "#006d32", "#26a641", "#39d353")
 
-#: Weeks shown (GitHub shows ~53 columns, Sunday on top).
+#: Weeks shown when there is no history yet (one GitHub-style year).
 WEEKS = 53
 
 
@@ -39,12 +39,28 @@ def level_for(count: int, max_count: int) -> int:
     return 4
 
 
-def grid_bounds(today: date | None = None) -> tuple[date, date]:
-    """Return (first_sunday, today) covering WEEKS week columns."""
+def grid_bounds(
+    today: date | None = None,
+    earliest: date | None = None,
+) -> tuple[date, date]:
+    """Return (first_sunday, today) for the table.
+
+    When ``earliest`` is given the table starts on the Sunday of that week,
+    so the graph covers every year since the first contribution. It never
+    shows less than the classic one-year (WEEKS) window, so a new account
+    still gets a full calendar instead of a sliver. With no history at all
+    it is exactly that one-year window.
+    """
     today = today or date.today()
     # Sunday of the current week (GitHub rows run Sun..Sat).
     last_sunday = today - timedelta(days=(today.weekday() + 1) % 7)
     first_sunday = last_sunday - timedelta(days=7 * (WEEKS - 1))
+    if earliest is not None:
+        earliest = min(earliest, today)
+        first_sunday = min(
+            first_sunday,
+            earliest - timedelta(days=(earliest.weekday() + 1) % 7),
+        )
     return first_sunday, today
 
 
@@ -54,14 +70,25 @@ def build_grid(
 ) -> list[list[ContributionCell]]:
     """Build week columns (oldest first) of day cells from {YYYY-MM-DD: n}.
 
-    Each column has 7 cells (Sunday..Saturday). Cells outside
-    [first_sunday, today] are marked blank (in_range=False).
+    The table spans the whole history: it starts one year back, or at the
+    week of the earliest contribution when that is older. Each column has 7
+    cells (Sunday..Saturday); days after today are blank (in_range=False).
     """
     today = today or date.today()
-    first_sunday, end = grid_bounds(today)
+    earliest: date | None = None
+    for key in counts:
+        try:
+            day = date.fromisoformat(key)
+        except (TypeError, ValueError):
+            continue
+        if day <= today and (earliest is None or day < earliest):
+            earliest = day
+    first_sunday, end = grid_bounds(today, earliest)
+    last_sunday = end - timedelta(days=(end.weekday() + 1) % 7)
+    weeks = max(1, (last_sunday - first_sunday).days // 7 + 1)
     max_count = max(counts.values(), default=0)
     columns: list[list[ContributionCell]] = []
-    for week in range(WEEKS):
+    for week in range(weeks):
         column: list[ContributionCell] = []
         for weekday in range(7):
             day = first_sunday + timedelta(days=week * 7 + weekday)
@@ -109,16 +136,19 @@ def _contrib_ref(repo: Path) -> str | None:
 def collect_counts(
     repo_paths: list[Path],
     author_email: str | None = None,
-    days: int = 371,
+    days: int | None = None,
 ) -> dict[str, int]:
     """Count commits per day (author date) across repos, deduped by SHA.
+
+    By default the full repository history is read, so the table can span
+    every year the account/repos have existed. Pass ``days`` to limit it to
+    the most recent window when a shorter view is wanted.
 
     Counts what GitHub would show: pushed history on each repo's default
     branch (merge commits excluded, like GitHub). Local work branches,
     backup branches and rewritten copies never count. When ``author_email``
     is None/empty, all authors count.
     """
-    since = (date.today() - timedelta(days=days)).isoformat()
     counts: dict[str, int] = {}
     seen: set[str] = set()
     for repo in repo_paths:
@@ -134,8 +164,10 @@ def collect_counts(
             "--no-merges",
             "--pretty=format:%H %ad",
             "--date=short",
-            f"--since={since}",
         ]
+        if days is not None and days > 0:
+            since = (date.today() - timedelta(days=days)).isoformat()
+            cmd.append(f"--since={since}")
         if author_email:
             cmd.append(f"--author={author_email}")
         try:

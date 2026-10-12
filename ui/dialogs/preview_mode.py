@@ -6,6 +6,9 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Optional
 
+from ui import scaling
+from ui.theme import get_theme
+
 
 class PreviewModeDialog(tk.Toplevel):
     """Dialog asking whether to preview pushed or unpushed commits."""
@@ -17,29 +20,26 @@ class PreviewModeDialog(tk.Toplevel):
         self.result: Optional[str] = None
         self.theme_mode = theme_mode
 
-        dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
-        self.configure(bg=dialog_bg)
+        colors = get_theme(theme_mode)
+        self.configure(bg=colors["frame_bg"])
 
         self.transient(parent)
         self.grab_set()
 
-        ttk.Label(self, text="Which commits would you like to preview?", font=("Helvetica", 11, "bold"), wraplength=360, style="Dialog.TLabel").pack(padx=20, pady=(16, 8))
+        ttk.Label(self, text="Which commits would you like to preview?", font=("Helvetica", 11, "bold"), wraplength=scaling.px(360), style="Dialog.TLabel").pack(padx=scaling.px(20), pady=(scaling.px(16), scaling.px(8)))
 
         button_frame = ttk.Frame(self, style="Dialog.TFrame")
-        button_frame.pack(padx=20, pady=(0, 16), fill=tk.X)
+        button_frame.pack(padx=scaling.px(20), pady=(0, scaling.px(16)), fill=tk.X)
 
         ttk.Button(button_frame, text="Pushed commits", command=self._on_pushed, width=18, style="Dialog.TButton").pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Unpushed commits", command=self._on_unpushed, width=18, style="Dialog.TButton").pack(side=tk.LEFT, padx=5)
 
         cancel_frame = ttk.Frame(self, style="Dialog.TFrame")
-        cancel_frame.pack(padx=20, pady=(0, 16), fill=tk.X)
+        cancel_frame.pack(padx=scaling.px(20), pady=(0, scaling.px(16)), fill=tk.X)
         ttk.Button(cancel_frame, text="Cancel", command=self._on_cancel, style="Dialog.TButton", width=12).pack(side=tk.RIGHT, padx=5)
 
         self.bind("<Escape>", lambda e: self._on_cancel())
-        self.update_idletasks()
-        x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_width() // 2)
-        y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.winfo_height() // 2)
-        self.geometry(f"+{x}+{y}")
+        scaling.center_on_parent(self, parent)
 
     def _on_pushed(self) -> None:
         self.result = "pushed"

@@ -16,7 +16,9 @@ from utils.time_utils import (
     parse_hhmm,
     parse_iso_to_dt,
 )
+from ui import scaling
 from ui.dialogs.contribution_graph import ContributionGraph
+from ui.theme import get_theme
 
 
 def suggest_date_after(last_commit_iso: Optional[str]) -> str:
@@ -32,18 +34,18 @@ def suggest_date_after(last_commit_iso: Optional[str]) -> str:
     return now_date_str()
 
 
-# Display scale for this dialog (sizes and fonts are multiplied by this).
-_UI_SCALE = 1.5
+# Sizes below are logical pixels at the baseline DPI; ``scaling.px`` adapts
+# them to the current display. Point-sized fonts scale through ``tk scaling``.
 
 
 def _px(value: int) -> int:
-    """Scale a pixel size (padding, width, wrap length, geometry)."""
-    return int(round(value * _UI_SCALE))
+    """Scale a pixel size (padding, slider, wrap length, geometry)."""
+    return scaling.px(value)
 
 
 def _font(name: str, size: int, *attrs: str) -> tuple:
-    """Scale a font tuple, e.g. _font("Helvetica", 10, "bold")."""
-    return (name, int(round(size * _UI_SCALE)), *attrs)
+    """Build a font tuple; point sizes already follow the display DPI."""
+    return (name, int(size), *attrs)
 
 
 class NumericKeypadDialog(tk.Toplevel):
@@ -91,8 +93,8 @@ class NumericKeypadDialog(tk.Toplevel):
     ) -> None:
         super().__init__(parent)
         self.title(title)
-        # Bigger window: allow resizing horizontally, but keep minsize large
-        self.minsize(_px(920), _px(600) - 25)
+        # Minimum stays inside small screens; the final size is fitted below.
+        self.minsize(scaling.px(720), scaling.px(500))
         self.resizable(True, True)
         self.result: Optional[int] = None
         self.minvalue = minvalue
@@ -143,9 +145,17 @@ class NumericKeypadDialog(tk.Toplevel):
         self.graph: Optional[ContributionGraph] = None
         self.graph_frame: Optional[ttk.LabelFrame] = None
         self._graph_job: Optional[str] = None
+        # Only unfold the graph by default when the dialog comfortably fits;
+        # on a laptop the toggle keeps it one click away.
+        try:
+            self._graph_expanded = scaling.px(785) <= int(self.winfo_screenheight() * 0.92)
+        except tk.TclError:
+            self._graph_expanded = False
+        self.graph_toggle_var: Optional[tk.StringVar] = None
+        self.graph_body: Optional[ttk.Frame] = None
 
-        dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
-        self.configure(bg=dialog_bg)
+        colors = get_theme(theme_mode)
+        self.configure(bg=colors["frame_bg"])
 
         # Make it modal
         self.transient(parent)
@@ -186,16 +196,14 @@ class NumericKeypadDialog(tk.Toplevel):
                 repo_frame = ttk.LabelFrame(left, text="Repository (has commits to push)", padding=_px(4), style="Dialog.TLabelframe")
                 repo_frame.grid(row=0, column=0, sticky="ew", pady=(0, _px(4)))
                 repo_frame.columnconfigure(0, weight=1)
-                repo_bg = "#1e2228" if theme_mode == "dark" else "#f1f5f9"
-                repo_fg = "#e8e8e8" if theme_mode == "dark" else "#111827"
                 self.repo_listbox = tk.Listbox(
                     repo_frame,
                     height=min(6, len(self.repo_options)),
                     font=_font("Helvetica", 10),
-                    bg=repo_bg,
-                    fg=repo_fg,
-                    selectbackground="#4a90d9",
-                    selectforeground="#ffffff",
+                    bg=colors["entry_bg"],
+                    fg=colors["fg"],
+                    selectbackground=colors["selected_bg"],
+                    selectforeground=colors["selected_fg"],
                     activestyle="none",
                     highlightthickness=0,
                     relief=tk.SOLID,
@@ -221,9 +229,6 @@ class NumericKeypadDialog(tk.Toplevel):
             count_row = ttk.Frame(left, style="Dialog.TFrame")
             count_row.grid(row=ro + 0, column=0, sticky="ew", pady=(_px(2), _px(8)))
             ttk.Label(count_row, text="Count:", font=_font("Helvetica", 11, "bold"), style="Dialog.TLabel").pack(side=tk.LEFT)
-            scale_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
-            scale_trough = "#1e2228" if theme_mode == "dark" else "#d7dde5"
-            scale_fg = "#e8e8e8" if theme_mode == "dark" else "#111827"
             self.count_scale = tk.Scale(
                 count_row,
                 from_=minvalue,
@@ -236,19 +241,19 @@ class NumericKeypadDialog(tk.Toplevel):
                 width=_px(18),
                 sliderlength=_px(30),
                 command=self._on_slide,
-                bg=scale_bg,
-                fg=scale_fg,
-                troughcolor=scale_trough,
-                activebackground="#4a90d9",
+                bg=colors["frame_bg"],
+                fg=colors["fg"],
+                troughcolor=colors["entry_bg"],
+                activebackground=colors["primary"],
                 highlightthickness=0,
                 bd=0,
             )
             self.count_scale.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(_px(8), _px(4)))
             self.count_scale.set(maxvalue)
-            ttk.Label(count_row, textvariable=self.value_var, font=_font("Helvetica", 12, "bold"), width=_px(4), anchor=tk.CENTER, style="Dialog.TLabel").pack(side=tk.LEFT)
+            ttk.Label(count_row, textvariable=self.value_var, font=_font("Helvetica", 12, "bold"), width=4, anchor=tk.CENTER, style="Dialog.TLabel").pack(side=tk.LEFT)
             self.of_var = tk.StringVar(value=f"of {maxvalue}")
             ttk.Label(count_row, textvariable=self.of_var, font=_font("Helvetica", 10), style="Dialog.TLabel").pack(side=tk.LEFT, padx=(_px(8), 0))
-            ttk.Button(count_row, text="All", width=_px(6), command=self._on_select_all, style="Dialog.TButton").pack(side=tk.LEFT, padx=(_px(8), 0))
+            ttk.Button(count_row, text="All", width=6, command=self._on_select_all, style="Dialog.TButton").pack(side=tk.LEFT, padx=(_px(8), 0))
 
             self.count_info_var = tk.StringVar(value="")
             ttk.Label(left, textvariable=self.count_info_var, font=_font("Helvetica", 9, "italic"), style="Dialog.TLabel").grid(row=ro + 1, column=0, sticky="w", pady=(0, _px(6)))
@@ -258,17 +263,15 @@ class NumericKeypadDialog(tk.Toplevel):
             list_frame.grid(row=ro + 2, column=0, sticky="nsew")
             list_frame.columnconfigure(0, weight=1)
             list_frame.rowconfigure(0, weight=1)
-            entry_bg = "#1e2228" if theme_mode == "dark" else "#f1f5f9"
-            entry_fg = "#e8e8e8" if theme_mode == "dark" else "#111827"
             self.commit_listbox = tk.Listbox(
                 list_frame,
                 height=6,
-                width=_px(44),
+                width=44,
                 font=_font("Courier", 9),
-                bg=entry_bg,
-                fg=entry_fg,
-                selectbackground=entry_bg,
-                selectforeground=entry_fg,
+                bg=colors["entry_bg"],
+                fg=colors["fg"],
+                selectbackground=colors["entry_bg"],
+                selectforeground=colors["fg"],
                 activestyle="none",
                 highlightthickness=0,
                 relief=tk.SOLID,
@@ -394,13 +397,13 @@ class NumericKeypadDialog(tk.Toplevel):
             self.custom_time_to_var = tk.StringVar(value=work_end_hour)
 
             ttk.Label(custom_frame, text="Date (YYYY-MM-DD):", font=_font("Helvetica", 10), style="Dialog.TLabel").grid(row=0, column=0, sticky="w", pady=_px(4), padx=(_px(4), _px(8)))
-            self.custom_date_entry = ttk.Entry(custom_frame, textvariable=self.custom_date_var, width=_px(20), style="Dialog.TEntry", font=_font("Helvetica", 10))
+            self.custom_date_entry = ttk.Entry(custom_frame, textvariable=self.custom_date_var, width=20, style="Dialog.TEntry", font=_font("Helvetica", 10))
             self.custom_date_entry.grid(row=0, column=1, sticky="ew", pady=_px(4), padx=(0, _px(4)))
             ttk.Label(custom_frame, text="From (HH:MM):", font=_font("Helvetica", 10), style="Dialog.TLabel").grid(row=1, column=0, sticky="w", pady=_px(4), padx=(_px(4), _px(8)))
-            self.custom_time_from_entry = ttk.Entry(custom_frame, textvariable=self.custom_time_from_var, width=_px(20), style="Dialog.TEntry", font=_font("Helvetica", 10), justify=tk.CENTER)
+            self.custom_time_from_entry = ttk.Entry(custom_frame, textvariable=self.custom_time_from_var, width=20, style="Dialog.TEntry", font=_font("Helvetica", 10), justify=tk.CENTER)
             self.custom_time_from_entry.grid(row=1, column=1, sticky="ew", pady=_px(4), padx=(0, _px(4)))
             ttk.Label(custom_frame, text="To (HH:MM):", font=_font("Helvetica", 10), style="Dialog.TLabel").grid(row=2, column=0, sticky="w", pady=_px(4), padx=(_px(4), _px(8)))
-            self.custom_time_to_entry = ttk.Entry(custom_frame, textvariable=self.custom_time_to_var, width=_px(20), style="Dialog.TEntry", font=_font("Helvetica", 10), justify=tk.CENTER)
+            self.custom_time_to_entry = ttk.Entry(custom_frame, textvariable=self.custom_time_to_var, width=20, style="Dialog.TEntry", font=_font("Helvetica", 10), justify=tk.CENTER)
             self.custom_time_to_entry.grid(row=2, column=1, sticky="ew", pady=_px(4), padx=(0, _px(4)))
             self.custom_hint_label = ttk.Label(
                 custom_frame,
@@ -421,11 +424,11 @@ class NumericKeypadDialog(tk.Toplevel):
             self.range_end_date_var = tk.StringVar(value=suggest_date_after(last_commit_iso))
 
             ttk.Label(range_frame, text="From (YYYY-MM-DD):", font=_font("Helvetica", 10), style="Dialog.TLabel").grid(row=0, column=0, sticky="w", pady=_px(4), padx=(_px(4), _px(8)))
-            self.range_start_entry = ttk.Entry(range_frame, textvariable=self.range_start_date_var, width=_px(20), style="Dialog.TEntry", font=_font("Helvetica", 10))
+            self.range_start_entry = ttk.Entry(range_frame, textvariable=self.range_start_date_var, width=20, style="Dialog.TEntry", font=_font("Helvetica", 10))
             self.range_start_entry.grid(row=0, column=1, sticky="ew", pady=_px(4), padx=(0, _px(4)))
 
             ttk.Label(range_frame, text="To (YYYY-MM-DD):", font=_font("Helvetica", 10), style="Dialog.TLabel").grid(row=1, column=0, sticky="w", pady=_px(4), padx=(_px(4), _px(8)))
-            self.range_end_entry = ttk.Entry(range_frame, textvariable=self.range_end_date_var, width=_px(20), style="Dialog.TEntry", font=_font("Helvetica", 10))
+            self.range_end_entry = ttk.Entry(range_frame, textvariable=self.range_end_date_var, width=20, style="Dialog.TEntry", font=_font("Helvetica", 10))
             self.range_end_entry.grid(row=1, column=1, sticky="ew", pady=_px(4), padx=(0, _px(4)))
 
             self.range_hint_label = ttk.Label(
@@ -467,19 +470,17 @@ class NumericKeypadDialog(tk.Toplevel):
             single.columnconfigure(0, weight=1)
 
             self.value_var = tk.StringVar(value="0")
-            entry_bg = "#1e2228" if theme_mode == "dark" else "#f1f5f9"
-            entry_fg = "#e8e8e8" if theme_mode == "dark" else "#111827"
             display = tk.Entry(
                 single,
                 textvariable=self.value_var,
                 font=_font("Helvetica", 18, "bold"),
-                width=_px(20),
+                width=20,
                 justify=tk.CENTER,
                 state="readonly",
-                bg=entry_bg,
-                fg=entry_fg,
-                readonlybackground=entry_bg,
-                disabledforeground=entry_fg,
+                bg=colors["entry_bg"],
+                fg=colors["fg"],
+                readonlybackground=colors["entry_bg"],
+                disabledforeground=colors["fg"],
                 relief=tk.SOLID,
                 bd=1,
             )
@@ -499,17 +500,35 @@ class NumericKeypadDialog(tk.Toplevel):
                 row_frame = ttk.Frame(keypad_frame, style="Dialog.TFrame")
                 row_frame.grid(row=r, column=0, pady=_px(3))
                 for c, btn_text in enumerate(row):
-                    btn = ttk.Button(row_frame, text=btn_text, width=_px(8), command=lambda t=btn_text: self._on_key(t), style="Dialog.TButton")
+                    btn = ttk.Button(row_frame, text=btn_text, width=8, command=lambda t=btn_text: self._on_key(t), style="Dialog.TButton")
                     btn.grid(row=0, column=c, padx=_px(5), pady=_px(3), ipadx=_px(4), ipady=_px(10))
 
-        # ---------- contributions box (always visible, fixed height) ----------
+        # ---------- contributions box (collapsible, screen-aware height) ----------
         if self.show_date_options:
             self.graph_container = ttk.Frame(self.move_body, style="Dialog.TFrame")
             self.graph_container.pack(fill=tk.X, pady=(_px(6), _px(2)))
             self.graph_frame = ttk.LabelFrame(self.graph_container, text="Contributions", padding=_px(10), style="Dialog.TLabelframe")
             self.graph_frame.pack(fill=tk.X)
-            self.graph = ContributionGraph(self.graph_frame, theme_mode=theme_mode, initial_zoom=self.graph_zoom)
-            # No fill/expand: the graph keeps its locked content size.
+            graph_head = ttk.Frame(self.graph_frame, style="Dialog.TFrame")
+            graph_head.pack(fill=tk.X, pady=(0, _px(4)))
+            ttk.Label(
+                graph_head,
+                text="Planned days are outlined in gold.",
+                font=_font("Helvetica", 8, "italic"),
+                style="DialogMuted.TLabel",
+            ).pack(side=tk.LEFT)
+            self.graph_toggle_var = tk.StringVar(value="Hide" if self._graph_expanded else "Show")
+            ttk.Button(
+                graph_head,
+                textvariable=self.graph_toggle_var,
+                command=self._toggle_graph,
+                style="Dialog.TButton",
+                width=8,
+            ).pack(side=tk.RIGHT)
+            self.graph_body = ttk.Frame(self.graph_frame, style="Dialog.TFrame")
+            if self._graph_expanded:
+                self.graph_body.pack(fill=tk.X)
+            self.graph = ContributionGraph(self.graph_body, theme_mode=theme_mode, initial_zoom=self.graph_zoom)
             self.graph.pack(anchor=tk.CENTER)
             if self.repo_options:
                 try:
@@ -539,31 +558,50 @@ class NumericKeypadDialog(tk.Toplevel):
         button_frame.pack(pady=_px(16), fill=tk.X)
         inner_btn = ttk.Frame(button_frame, style="Dialog.TFrame")
         inner_btn.pack(anchor=tk.CENTER)
-        ok_btn = ttk.Button(inner_btn, text="OK", command=self._on_ok, style="Dialog.TButton", width=_px(12))
+        ok_btn = ttk.Button(inner_btn, text="OK", command=self._on_ok, style="DialogPrimary.TButton", width=12)
         ok_btn.pack(side=tk.LEFT, padx=_px(8), ipady=_px(4))
-        cancel_btn = ttk.Button(inner_btn, text="Cancel", command=self._on_cancel, style="Dialog.TButton", width=_px(12))
+        cancel_btn = ttk.Button(inner_btn, text="Cancel", command=self._on_cancel, style="Dialog.TButton", width=12)
         cancel_btn.pack(side=tk.LEFT, padx=_px(8), ipady=_px(4))
 
         # Bind keyboard events
         self.bind("<Return>", lambda e: self._on_ok())
         self.bind("<Escape>", lambda e: self._on_cancel())
 
-        # Center on parent and enforce bigger geometry
+        # Fit the dialog to this specific display, then center it.
         self.update_idletasks()
-        # Enforce larger size for move dialog
         if self.show_date_options:
-            cur_w = self.winfo_width()
-            cur_h = self.winfo_height()
-            target_w = max(cur_w, _px(920))
-            target_h = max(cur_h, _px(600) - 25)
-            self.geometry(f"{target_w}x{target_h}")
-            self.update_idletasks()
-        x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_width() // 2)
-        y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.winfo_height() // 2)
-        self.geometry(f"+{x}+{y}")
+            scaling.fit_window(
+                self,
+                960,
+                900 if self._graph_expanded else 660,
+                min_width=760,
+                min_height=520,
+            )
+        else:
+            scaling.fit_window(self, 430, 560, min_width=360, min_height=440)
+        scaling.center_on_parent(self, parent)
         try:
             if self.show_date_options and hasattr(self, "count_scale"):
                 self.count_scale.focus_set()
+        except tk.TclError:
+            pass
+
+    def _toggle_graph(self) -> None:
+        """Show or hide the contribution graph without reloading data."""
+        if self.graph_body is None:
+            return
+        self._graph_expanded = not self._graph_expanded
+        if self._graph_expanded:
+            self.graph_body.pack(fill=tk.X)
+        else:
+            self.graph_body.pack_forget()
+        if self.graph_toggle_var is not None:
+            self.graph_toggle_var.set("Hide" if self._graph_expanded else "Show")
+        # Give the graph room when it is shown, and remove the empty gap when
+        # it is hidden; keep any manual width the user chose.
+        try:
+            target_h = scaling.fit_size(self, 960, 900 if self._graph_expanded else 660)[1]
+            self.geometry(f"{self.winfo_width()}x{target_h}")
         except tk.TclError:
             pass
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext, ttk
+from tkinter import filedialog, messagebox, ttk
 from pathlib import Path
 from typing import List, Optional
 from datetime import datetime, timedelta
@@ -15,10 +15,12 @@ from core.repo_scanner import RepoScanner
 from core.repo_state import RepoState
 from core.settings_db import SettingsDB
 from core.working_tree_manager import WorkingTreeManager
+from ui import scaling
 from ui.dialogs import CommitDialog, ContributionsDialog, ManageCommitsDialog, NumericKeypadDialog, PreviewModeDialog, ResetDialog, SettingsDialog
 from ui.dialogs.autoscale import enable_autoscale
 from ui.dialogs.geometry import enable_geometry_memory
 from ui.theme import apply_theme as apply_theme_style
+from ui.theme import get_theme
 from utils.network import NO_INTERNET_MSG, has_internet_connection, is_network_error_message
 from utils.time_utils import is_future, now_display, now_iso
 
@@ -31,6 +33,11 @@ class GitManagerGUI:
         self.root = root
         self.root.title("Git Manager - Repository Management Tool")
         self.root.configure(bg="#f0f0f0")
+        min_w, min_h = scaling.fit_size(self.root, 800, 540)
+        try:
+            self.root.minsize(min_w, min_h)
+        except tk.TclError:
+            pass
 
         # Initialize settings database
         self.db = SettingsDB()
@@ -128,6 +135,7 @@ class GitManagerGUI:
         # Keep status_var refresh behavior
         if hasattr(self, "status_var"):
             self.status_var.set(self.status_var.get())
+        self._theme_colors = colors
         self._theme_tree_tags(colors["tree_tag_has"], colors["tree_tag_clean"])
 
     def _theme_tree_tags(self, has_color: str, clean_color: str) -> None:
@@ -138,13 +146,16 @@ class GitManagerGUI:
     # --- layout persistence helpers --------------------------------------
     def _restore_layout(self) -> None:
         """Restore saved window geometry, column widths and paned sash position."""
-        # Restore tree column widths immediately (widget already exists)
+        # Layouts are saved in pixels together with the UI scale that produced
+        # them, so a layout saved on a large monitor is adapted to this screen.
+        saved_scale = self.db.get_ui_scale()
         widths = self.db.get_tree_column_widths()
         if widths:
             for col, w in widths.items():
                 try:
+                    w = scaling.rescale_length(int(w), saved_scale)
                     # Clamp to sensible range to avoid broken layout
-                    w = max(20, min(800, int(w)))
+                    w = max(scaling.px(40), min(scaling.px(900), w))
                     self.tree.column(col, width=w)
                 except Exception:
                     continue
@@ -152,6 +163,7 @@ class GitManagerGUI:
         try:
             maximized = self.db.get_window_maximized()
             geom = self.db.get_window_geometry()
+            fitted = scaling.rescale_geometry(self.root, geom, saved_scale) if geom else None
             if maximized:
                 try:
                     self.root.state("zoomed")
@@ -159,11 +171,11 @@ class GitManagerGUI:
                     try:
                         self.root.attributes("-zoomed", True)
                     except tk.TclError:
-                        if geom:
-                            self.root.geometry(geom)
-            elif geom:
+                        if fitted:
+                            self.root.geometry(fitted)
+            elif fitted:
                 try:
-                    self.root.geometry(geom)
+                    self.root.geometry(fitted)
                 except tk.TclError:
                     pass
         except Exception:
@@ -177,7 +189,8 @@ class GitManagerGUI:
                     if hasattr(self, "paned") and self.paned.winfo_height() > 1:
                         # Clamp sash to 15%-85% of pane height for safety
                         h = self.paned.winfo_height()
-                        sash_clamped = max(int(h * 0.15), min(int(h * 0.85), int(sash)))
+                        sash_target = scaling.rescale_length(int(sash), saved_scale)
+                        sash_clamped = max(int(h * 0.15), min(int(h * 0.85), int(sash_target)))
                         self.paned.sashpos(0, sash_clamped)
                     else:
                         # Retry shortly if not yet mapped
@@ -211,6 +224,7 @@ class GitManagerGUI:
 
     def _save_window_geometry(self) -> None:
         try:
+            self.db.set_ui_scale(scaling.scale())
             if self._is_window_maximized():
                 self.db.set_window_maximized(True)
             else:
@@ -239,6 +253,7 @@ class GitManagerGUI:
                 except Exception:
                     continue
             if widths:
+                self.db.set_ui_scale(scaling.scale())
                 self.db.set_tree_column_widths(widths)
         except Exception:
             pass
@@ -285,87 +300,198 @@ class GitManagerGUI:
     def _on_paned_sash_motion(self, event: tk.Event | None = None) -> None:  # type: ignore
         pass
 
+    # ------------------------------------------------------------------ layout
     def _build_layout(self) -> None:
-        # Action buttons with better styling
-        buttons = ttk.Frame(self.root, padding=8)
-        buttons.pack(fill=tk.X, padx=12, pady=12)
-        
-        # Action buttons use Action.TButton from theme.py (single source of truth)
-        ttk.Button(buttons, text="🔄 Refresh", command=self.refresh_repos, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
-        ttk.Button(buttons, text="🔀 Switch Branch", command=self.action_switch, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
-        ttk.Button(buttons, text="👁 Preview Commits", command=self.action_preview, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
-        ttk.Button(buttons, text="📝 Make a Commit", command=self.action_make_commit, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
-        ttk.Button(buttons, text="🚀 Move Commits", command=self.action_move, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
-        ttk.Button(buttons, text="📊 Contributions", command=self.action_contributions, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
-        ttk.Button(buttons, text="🔁 Reset / Delete", command=self.action_reset, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
-        ttk.Button(buttons, text="⚙️ Settings", command=self.action_settings, style="Action.TButton").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+        """Build the responsive workspace: header + sidebar + content + status.
 
-        # Split main content into resizable panes
-        self.paned = ttk.PanedWindow(self.root, orient=tk.VERTICAL)
-        self.paned.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
-        paned = self.paned  # keep local alias for readability
+        The sidebar keeps every feature visible without stealing vertical
+        space, which is scarce on 13" laptops; the table and log share the
+        remaining area through a resizable split. All metrics go through
+        ``scaling.px`` so the proportions are identical on any display.
+        """
+        px = scaling.px
+        root = self.root
+        root.columnconfigure(0, weight=1)
+        root.rowconfigure(1, weight=1)
 
-        # Repository tree with improved styling
-        tree_frame = ttk.Frame(paned)
-        paned.add(tree_frame, weight=1)
-        ttk.Label(tree_frame, text="📊 Repositories", font=("Helvetica", 11, "bold")).pack(anchor=tk.W, pady=(0, 8))
-        # Treeview styling comes from theme.py (single source of truth)
-        tree_container = ttk.Frame(tree_frame)
-        tree_container.pack(fill=tk.BOTH, expand=True)
+        # ---------- header ----------
+        header = ttk.Frame(root, style="Header.TFrame", padding=(px(18), px(12)))
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(0, weight=1)
+        title_box = ttk.Frame(header, style="Header.TFrame")
+        title_box.grid(row=0, column=0, sticky="w")
+        ttk.Label(title_box, text="Git Manager", style="Title.TLabel").pack(anchor=tk.W)
+        ttk.Label(
+            title_box,
+            text="Repository workspace",
+            style="Subtitle.TLabel",
+        ).pack(anchor=tk.W, pady=(px(1), 0))
+
+        self.repo_count_var = tk.StringVar(value="0 repositories")
+        ttk.Label(header, textvariable=self.repo_count_var, style="Chip.TLabel").grid(
+            row=0, column=1, sticky="e"
+        )
+
+        # ---------- body ----------
+        body = ttk.Frame(root, style="App.TFrame")
+        body.grid(row=1, column=0, sticky="nsew", padx=px(14), pady=(px(12), px(10)))
+        body.columnconfigure(1, weight=1)
+        body.rowconfigure(0, weight=1)
+        body.columnconfigure(0, minsize=px(196))
+
+        self._build_sidebar(body)
+
+        content = ttk.Frame(body, style="App.TFrame")
+        content.grid(row=0, column=1, sticky="nsew", padx=(px(12), 0))
+        content.columnconfigure(0, weight=1)
+        content.rowconfigure(0, weight=1)
+
+        self.paned = ttk.PanedWindow(content, orient=tk.VERTICAL)
+        self.paned.grid(row=0, column=0, sticky="nsew")
+
+        # ---------- repositories card ----------
+        tree_card = ttk.Frame(self.paned, style="Card.TFrame", padding=(px(14), px(12)))
+        self.paned.add(tree_card, weight=3)
+        tree_card.columnconfigure(0, weight=1)
+        tree_card.rowconfigure(1, weight=1)
+
+        tree_head = ttk.Frame(tree_card, style="CardHeader.TFrame")
+        tree_head.grid(row=0, column=0, sticky="ew", pady=(0, px(10)))
+        tree_head.columnconfigure(0, weight=1)
+        ttk.Label(tree_head, text="Repositories", style="CardTitle.TLabel").grid(row=0, column=0, sticky="w")
+        self.repo_hint_var = tk.StringVar(value="Select a repository to act on it")
+        ttk.Label(tree_head, textvariable=self.repo_hint_var, style="CardMuted.TLabel").grid(
+            row=0, column=1, sticky="e"
+        )
+
+        tree_container = ttk.Frame(tree_card, style="CardBody.TFrame")
+        tree_container.grid(row=1, column=0, sticky="nsew")
+        tree_container.columnconfigure(0, weight=1)
+        tree_container.rowconfigure(0, weight=1)
         self.tree = ttk.Treeview(
             tree_container,
             columns=("name", "commits", "pushed", "branch", "base"),
             show="tree headings",
             selectmode="browse",
-            height=12,
+            height=10,
         )
         self.tree.heading("#0", text="")
         self.tree.heading("name", text="Repository")
         self.tree.heading("commits", text="Pending")
         self.tree.heading("pushed", text="Pushed")
-        self.tree.heading("branch", text="Current Branch")
-        self.tree.heading("base", text="Base Branch")
-        self.tree.column("#0", width=60, stretch=False)
-        self.tree.column("name", width=250, anchor=tk.W)
-        self.tree.column("commits", width=90, anchor=tk.CENTER)
-        self.tree.column("pushed", width=90, anchor=tk.CENTER)
-        self.tree.column("branch", width=170, anchor=tk.CENTER)
-        self.tree.column("base", width=140, anchor=tk.CENTER)
-        scrollbar = ttk.Scrollbar(tree_container, orient=tk.VERTICAL, command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scrollbar.set)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.heading("branch", text="Branch")
+        self.tree.heading("base", text="Base")
+        self.tree.column("#0", width=px(46), minwidth=px(40), stretch=False)
+        self.tree.column("name", width=px(230), minwidth=px(130), anchor=tk.W, stretch=True)
+        self.tree.column("commits", width=px(80), minwidth=px(64), anchor=tk.CENTER, stretch=False)
+        self.tree.column("pushed", width=px(80), minwidth=px(64), anchor=tk.CENTER, stretch=False)
+        self.tree.column("branch", width=px(150), minwidth=px(90), anchor=tk.CENTER, stretch=True)
+        self.tree.column("base", width=px(120), minwidth=px(80), anchor=tk.CENTER, stretch=True)
+        tree_scroll = ttk.Scrollbar(tree_container, orient=tk.VERTICAL, command=self.tree.yview)
+        tree_hscroll = ttk.Scrollbar(tree_container, orient=tk.HORIZONTAL, command=self.tree.xview)
+        self.tree.configure(yscrollcommand=tree_scroll.set, xscrollcommand=tree_hscroll.set)
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        tree_scroll.grid(row=0, column=1, sticky="ns")
+        tree_hscroll.grid(row=1, column=0, sticky="ew")
 
-        # Output pane with better styling
-        output_frame = ttk.Frame(paned)
-        paned.add(output_frame, weight=1)
-        ttk.Label(output_frame, text="📝 Output", font=("Helvetica", 11, "bold")).pack(anchor=tk.W, pady=(0, 8))
-        output_container = ttk.Frame(output_frame)
-        output_container.pack(fill=tk.BOTH, expand=True)
-        self.output = scrolledtext.ScrolledText(
+        # ---------- output card ----------
+        output_card = ttk.Frame(self.paned, style="Card.TFrame", padding=(px(14), px(12)))
+        self.paned.add(output_card, weight=2)
+        output_card.columnconfigure(0, weight=1)
+        output_card.rowconfigure(1, weight=1)
+
+        output_head = ttk.Frame(output_card, style="CardHeader.TFrame")
+        output_head.grid(row=0, column=0, sticky="ew", pady=(0, px(10)))
+        output_head.columnconfigure(0, weight=1)
+        ttk.Label(output_head, text="Output", style="CardTitle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            output_head,
+            text="Live operation log",
+            style="CardMuted.TLabel",
+        ).grid(row=0, column=1, sticky="e")
+
+        output_container = ttk.Frame(output_card, style="CardBody.TFrame")
+        output_container.grid(row=1, column=0, sticky="nsew")
+        output_container.columnconfigure(0, weight=1)
+        output_container.rowconfigure(0, weight=1)
+        self.output = tk.Text(
             output_container,
-            height=12,
+            height=8,
             state="disabled",
             font=("Courier", 10),
             bg="#1e1e1e",
             fg="#d4d4d4",
             insertbackground="white",
             wrap=tk.WORD,
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=0,
+            padx=px(10),
+            pady=px(8),
         )
-        self.output.pack(fill=tk.BOTH, expand=True)
+        output_scroll = ttk.Scrollbar(output_container, orient=tk.VERTICAL, command=self.output.yview)
+        self.output.configure(yscrollcommand=output_scroll.set)
+        self.output.grid(row=0, column=0, sticky="nsew")
+        output_scroll.grid(row=0, column=1, sticky="ns")
 
-        # Status bar with better styling
-        status_frame = ttk.Frame(self.root, relief=tk.SUNKEN, padding=(12, 8))
-        status_frame.pack(fill=tk.X, side=tk.BOTTOM)
-        
+        # ---------- status bar ----------
+        status_frame = ttk.Frame(root, style="Status.TFrame", padding=(px(16), px(6)))
+        status_frame.grid(row=2, column=0, sticky="ew")
+        status_frame.columnconfigure(0, weight=1)
         self.status_var = tk.StringVar(value="✓ Ready")
         self.status_label = ttk.Label(
             status_frame,
             textvariable=self.status_var,
             anchor=tk.W,
-            font=("Helvetica", 10, "bold"),
+            style="Status.TLabel",
         )
-        self.status_label.pack(fill=tk.X, ipady=2)
+        self.status_label.grid(row=0, column=0, sticky="w")
+
+        # Keyboard access to the most frequent action.
+        root.bind("<F5>", lambda _event: self.refresh_repos())
+
+    def _build_sidebar(self, parent: ttk.Frame) -> None:
+        """Left navigation with every feature grouped by task."""
+        px = scaling.px
+        sidebar = ttk.Frame(parent, style="Sidebar.TFrame", padding=(px(10), px(10)))
+        sidebar.grid(row=0, column=0, sticky="ns", padx=(0, px(2)))
+        sidebar.columnconfigure(0, weight=1)
+
+        def section(title: str) -> None:
+            ttk.Label(sidebar, text=title, style="SidebarSection.TLabel").pack(
+                fill=tk.X, pady=(px(12), px(4))
+            )
+
+        def item(text: str, command, *, primary: bool = False) -> None:
+            style = "SidebarPrimary.TButton" if primary else "Sidebar.TButton"
+            ttk.Button(sidebar, text=text, command=command, style=style).pack(
+                fill=tk.X, pady=px(2)
+            )
+
+        section("WORKSPACE")
+        item("🔄   Refresh", self.refresh_repos)
+        item("🔀   Switch Branch", self.action_switch)
+        item("👁   Preview Commits", self.action_preview)
+
+        section("COMMITS")
+        item("📝   Make a Commit", self.action_make_commit, primary=True)
+        item("🚀   Move Commits", self.action_move)
+        item("🔁   Reset / Delete", self.action_reset)
+
+        section("INSIGHTS")
+        item("📊   Contributions", self.action_contributions)
+
+        section("SYSTEM")
+        item("⚙️   Settings", self.action_settings)
+
+        # Keep the help hint at the bottom, away from the buttons.
+        footer = ttk.Frame(sidebar, style="Footer.TFrame")
+        footer.pack(fill=tk.X, side=tk.BOTTOM, pady=(px(16), 0))
+        ttk.Label(
+            footer,
+            text="F5 refreshes the list",
+            style="SidebarFooter.TLabel",
+        ).pack(anchor=tk.W, padx=px(10))
 
     def refresh_repos(self) -> None:
         base_dir = Path(self.base_var.get()).expanduser()
@@ -400,15 +526,21 @@ class GitManagerGUI:
                 tags=(tag,)
             )
         
-        # Configure tag colors
-        if self.theme_mode == "dark":
-            self.tree.tag_configure("has_commits", background="#333333")
-            self.tree.tag_configure("clean", background="#2b2b2b")
-        else:
-            self.tree.tag_configure("has_commits", background="#fff9e6")
-            self.tree.tag_configure("clean", background="#f0f8ff")
-        
-        self.status_var.set(f"✓ Loaded {len(states)} repositories from {base_dir}")
+        # Tag colors follow the active theme (single source of truth).
+        colors = getattr(self, "_theme_colors", None) or get_theme(self.theme_mode)
+        self._theme_tree_tags(colors["tree_tag_has"], colors["tree_tag_clean"])
+
+        pending_total = sum(max(0, int(state.commit_count)) for state in states)
+        repo_word = "repository" if len(states) == 1 else "repositories"
+        pending_word = "commit" if pending_total == 1 else "commits"
+        if hasattr(self, "repo_count_var"):
+            self.repo_count_var.set(
+                f"{len(states)} {repo_word}  ·  {pending_total} pending {pending_word}"
+            )
+        if hasattr(self, "repo_hint_var"):
+            self.repo_hint_var.set("Select a repository to act on it" if states else "No repositories found")
+
+        self.status_var.set(f"✓ Loaded {len(states)} {repo_word} from {base_dir}")
 
     def _has_origin_main(self, repo: Path) -> bool:
         """Check strict prerequisite: origin/main must exist as remote-tracking branch."""
@@ -513,14 +645,33 @@ class GitManagerGUI:
         self.switch_all_to_local_commit(skip_busy_check=True)
         self.root.destroy()
 
+    @staticmethod
+    def _output_tag_for(text: str) -> str | None:
+        """Semantic colour for a log line (tags are configured in theme.py)."""
+        stripped = text.lstrip()
+        if stripped.startswith("❌"):
+            return "error"
+        if stripped.startswith("✅"):
+            return "success"
+        if stripped.startswith("⚠"):
+            return "warning"
+        if stripped.startswith("⏭"):
+            return "muted"
+        return None
+
     def append_output(self, text: str) -> None:
         self.output.configure(state="normal")
         # Avoid double newlines – callers historically pass text with trailing \n
+
         if text.endswith("\n"):
             to_insert = text
         else:
             to_insert = text + "\n"
-        self.output.insert(tk.END, to_insert)
+        tag = self._output_tag_for(to_insert)
+        if tag:
+            self.output.insert(tk.END, to_insert, (tag,))
+        else:
+            self.output.insert(tk.END, to_insert)
         self.output.configure(state="disabled")
         self.output.see(tk.END)
         self.root.update_idletasks()  # avoid re-entrant event handling during operations
@@ -578,7 +729,7 @@ class GitManagerGUI:
         dialog = tk.Toplevel(self.root)
         dialog.title("Resolve cherry-pick conflict")
         dialog.resizable(True, True)
-        dialog.minsize(520, 360)
+        dialog.minsize(scaling.px(460), scaling.px(320))
         dialog.transient(self.root)
         dialog.grab_set()
 
@@ -634,7 +785,7 @@ class GitManagerGUI:
             content,
             text="Keep base preserves the target branch. Use incoming to apply the selected commit’s version.",
             style="Dialog.TLabel",
-            wraplength=700,
+            wraplength=scaling.px(560),
         ).pack(anchor=tk.W, pady=(12, 4))
 
         buttons = ttk.Frame(content, style="Dialog.TFrame")
@@ -655,10 +806,7 @@ class GitManagerGUI:
         dialog.bind("<KeyPress-2>", lambda event: finish("theirs"))
         dialog.bind("<KeyPress-3>", lambda event: finish("abort"))
         dialog.bind("<KeyPress-4>", lambda event: finish("skip"))
-        dialog.update_idletasks()
-        x = self.root.winfo_x() + (self.root.winfo_width() - dialog.winfo_width()) // 2
-        y = self.root.winfo_y() + (self.root.winfo_height() - dialog.winfo_height()) // 2
-        dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
+        scaling.center_on_parent(dialog, self.root)
         dialog.focus_set()
         self.root.wait_window(dialog)
 
@@ -1697,7 +1845,7 @@ class GitManagerGUI:
                             GitOperations.run_git(["add", "."], cwd=repo)
                             msg = GitOperations.run_git(["show", "-s", "--format=%B", commit], cwd=repo)
                             GitOperations.run_git_env(
-                                ["commit", "-m", msg, "--date", commit_iso],
+                                ["commit", "--no-verify", "-m", msg, "--date", commit_iso],
                                 cwd=repo,
                                 extra_env={"GIT_AUTHOR_DATE": commit_iso, "GIT_COMMITTER_DATE": commit_iso},
                             )
@@ -1711,7 +1859,7 @@ class GitManagerGUI:
                             GitOperations.run_git(["add", "."], cwd=repo)
                             msg = GitOperations.run_git(["show", "-s", "--format=%B", commit], cwd=repo)
                             GitOperations.run_git_env(
-                                ["commit", "-m", msg, "--date", commit_iso],
+                                ["commit", "--no-verify", "-m", msg, "--date", commit_iso],
                                 cwd=repo,
                                 extra_env={"GIT_AUTHOR_DATE": commit_iso, "GIT_COMMITTER_DATE": commit_iso},
                             )
@@ -1743,7 +1891,7 @@ class GitManagerGUI:
 
                 message = GitOperations.run_git(["show", "-s", "--format=%B", commit], cwd=repo)
                 GitOperations.run_git_env(
-                    ["commit", "-m", message, "--date", commit_iso],
+                    ["commit", "--no-verify", "-m", message, "--date", commit_iso],
                     cwd=repo,
                     extra_env={"GIT_AUTHOR_DATE": commit_iso, "GIT_COMMITTER_DATE": commit_iso},
                 )
@@ -1845,14 +1993,14 @@ class GitManagerGUI:
                             if choice == "ours":
                                 GitOperations.run_git(["checkout", "--ours", "."], cwd=repo)
                                 GitOperations.run_git(["add", "."], cwd=repo)
-                                GitOperations.run_git(["commit", "-C", commit], cwd=repo)
+                                GitOperations.run_git(["commit", "--no-verify", "-C", commit], cwd=repo)
                                 self.append_output(f"✓ Resolved with ours for {commit[:7]}\n")
                                 continue
 
                             if choice == "theirs":
                                 GitOperations.run_git(["checkout", "--theirs", "."], cwd=repo)
                                 GitOperations.run_git(["add", "."], cwd=repo)
-                                GitOperations.run_git(["commit", "-C", commit], cwd=repo)
+                                GitOperations.run_git(["commit", "--no-verify", "-C", commit], cwd=repo)
                                 self.append_output(f"✓ Resolved with theirs for {commit[:7]}\n")
                                 continue
 
@@ -1877,7 +2025,7 @@ class GitManagerGUI:
                         )
                     else:
                         # Preserve original author/date for remaining commits (intentionally different from moved commits which use new date)
-                        GitOperations.run_git(["commit", "-C", commit], cwd=repo)
+                        GitOperations.run_git(["commit", "--no-verify", "-C", commit], cwd=repo)
                 self.append_output("✅ local_commit updated to reflect remaining commits.\n")
             else:
                 # All commits were moved - simply sync local_commit to base
@@ -1935,6 +2083,16 @@ class GitManagerGUI:
                 self.append_output("↩️ Rolling back to previous state...\n")
                 try:
                     self._abort_in_progress_ops(repo)
+                except GitManagerError:
+                    pass
+                # Cherry-pick/replay commits can leave staged changes behind.
+                # Discard them before switching branches, otherwise checkout
+                # refuses to move and the rollback leaves the repo on the temp
+                # branch. original_branch is restored at the end of this block.
+                try:
+                    current_branch = GitOperations.run_git(["branch", "--show-current"], cwd=repo).strip()
+                    if temp_branch and current_branch in (temp_branch, base_branch, "local_commit"):
+                        GitOperations.run_git(["reset", "--hard", "HEAD"], cwd=repo)
                 except GitManagerError:
                     pass
                 if base_before and GitOperations.git_ok(["show-ref", "--verify", "--quiet", f"refs/heads/{base_branch}"], cwd=repo):

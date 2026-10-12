@@ -13,6 +13,8 @@ from typing import Optional
 
 from core.git_operations import GitManagerError
 from core.repo_factory import clone_repo, derive_folder_name, find_pending_setups, setup_new_repo
+from ui import scaling
+from ui.theme import get_theme
 
 
 class NewRepoDialog(tk.Toplevel):
@@ -28,34 +30,35 @@ class NewRepoDialog(tk.Toplevel):
         super().__init__(parent)
         self.title("New Repository")
         self.resizable(True, True)
-        self.minsize(560, 480)
         self.theme_mode = theme_mode
         self.base_dir = base_directory
         self.changed = False  # True when something was cloned/set up
 
-        dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
-        self.configure(bg=dialog_bg)
+        colors = get_theme(theme_mode)
+        self.configure(bg=colors["frame_bg"])
 
         self.transient(parent)
         self.grab_set()
 
+        px = scaling.px
+
         # --- Clone section -------------------------------------------------
         clone_frame = ttk.LabelFrame(self, text="Clone from URL", style="Dialog.TLabelframe")
-        clone_frame.pack(fill=tk.X, padx=20, pady=(16, 8))
+        clone_frame.pack(fill=tk.X, padx=px(20), pady=(px(16), px(8)))
 
         self.url_var = tk.StringVar()
         self.folder_var = tk.StringVar()
         self.branch_var = tk.StringVar(value=default_branch or "main")
 
         url_row = ttk.Frame(clone_frame, style="Dialog.TFrame")
-        url_row.pack(fill=tk.X, padx=12, pady=(12, 4))
+        url_row.pack(fill=tk.X, padx=px(12), pady=(px(12), px(4)))
         ttk.Label(url_row, text="URL:", style="Dialog.TLabel").pack(side=tk.LEFT)
         self.url_entry = ttk.Entry(url_row, textvariable=self.url_var, width=52, style="Dialog.TEntry")
-        self.url_entry.pack(side=tk.LEFT, padx=(8, 0), fill=tk.X, expand=True)
+        self.url_entry.pack(side=tk.LEFT, padx=(px(8), 0), fill=tk.X, expand=True)
         self.url_entry.bind("<KeyRelease>", self._on_url_changed)
 
         folder_row = ttk.Frame(clone_frame, style="Dialog.TFrame")
-        folder_row.pack(fill=tk.X, padx=12, pady=4)
+        folder_row.pack(fill=tk.X, padx=px(12), pady=px(4))
         ttk.Label(folder_row, text="Folder:", style="Dialog.TLabel").pack(side=tk.LEFT)
         ttk.Entry(folder_row, textvariable=self.folder_var, width=30, style="Dialog.TEntry").pack(
             side=tk.LEFT, padx=(8, 16)
@@ -66,51 +69,51 @@ class NewRepoDialog(tk.Toplevel):
         )
 
         btn_row = ttk.Frame(clone_frame, style="Dialog.TFrame")
-        btn_row.pack(fill=tk.X, padx=12, pady=(4, 12))
+        btn_row.pack(fill=tk.X, padx=px(12), pady=(px(4), px(12)))
         ttk.Label(
             btn_row,
             text=f"Clones into: {base_directory}",
             font=("Helvetica", 8, "italic"),
             style="Dialog.TLabel",
         ).pack(side=tk.LEFT)
-        ttk.Button(btn_row, text="Clone", command=self._on_clone, style="Dialog.TButton", width=12).pack(
+        ttk.Button(btn_row, text="Clone", command=self._on_clone, style="DialogPrimary.TButton", width=12).pack(
             side=tk.RIGHT
         )
 
         self.status_var = tk.StringVar(value="")
         ttk.Label(self, textvariable=self.status_var, style="Dialog.TLabel").pack(
-            anchor=tk.W, padx=20
+            anchor=tk.W, padx=px(20)
         )
 
         # --- Suggestions section -------------------------------------------
         sugg_frame = ttk.LabelFrame(
             self, text="Suggestions – repos you added manually", style="Dialog.TLabelframe"
         )
-        sugg_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=8)
+        sugg_frame.pack(fill=tk.BOTH, expand=True, padx=px(20), pady=px(8))
         ttk.Label(
             sugg_frame,
             text="If you cloned something via terminal, it shows up here. Pick it to set up base + local_commit:",
             font=("Helvetica", 9, "italic"),
             style="Dialog.TLabel",
-            wraplength=500,
+            wraplength=scaling.px(500),
         ).pack(anchor=tk.W, padx=12, pady=(8, 4))
 
         list_container = ttk.Frame(sugg_frame, style="Dialog.TFrame")
-        list_container.pack(fill=tk.BOTH, expand=True, padx=12, pady=4)
+        list_container.pack(fill=tk.BOTH, expand=True, padx=px(12), pady=px(4))
         self.sugg_tree = ttk.Treeview(
             list_container, columns=("info",), show="tree headings", selectmode="browse", height=8
         )
         self.sugg_tree.heading("#0", text="Repository")
         self.sugg_tree.heading("info", text="Status")
-        self.sugg_tree.column("#0", width=180)
-        self.sugg_tree.column("info", width=320, anchor=tk.W)
+        self.sugg_tree.column("#0", width=scaling.px(180), minwidth=scaling.px(120))
+        self.sugg_tree.column("info", width=scaling.px(320), minwidth=scaling.px(180), anchor=tk.W)
         scrollbar = ttk.Scrollbar(list_container, orient=tk.VERTICAL, command=self.sugg_tree.yview)
         self.sugg_tree.configure(yscrollcommand=scrollbar.set)
         self.sugg_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         sugg_btns = ttk.Frame(sugg_frame, style="Dialog.TFrame")
-        sugg_btns.pack(fill=tk.X, padx=12, pady=(4, 12))
+        sugg_btns.pack(fill=tk.X, padx=px(12), pady=(px(4), px(12)))
         ttk.Button(sugg_btns, text="Refresh", command=self._reload, style="Dialog.TButton").pack(
             side=tk.LEFT, padx=(0, 6)
         )
@@ -122,7 +125,7 @@ class NewRepoDialog(tk.Toplevel):
         )
 
         bottom = ttk.Frame(self, style="Dialog.TFrame")
-        bottom.pack(pady=(0, 16))
+        bottom.pack(pady=(0, px(16)))
         ttk.Button(bottom, text="Close", command=self._on_close, style="Dialog.TButton", width=12).pack()
 
         self.bind("<Escape>", lambda e: self._on_close())
@@ -130,13 +133,8 @@ class NewRepoDialog(tk.Toplevel):
         self._pending: list = []
         self._reload()
 
-        self.update_idletasks()
-        try:
-            x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_width() // 2)
-            y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.winfo_height() // 2)
-            self.geometry(f"+{max(0, x)}+{max(0, y)}")
-        except tk.TclError:
-            pass
+        scaling.fit_window(self, 660, 600, min_width=520, min_height=440)
+        scaling.center_on_parent(self, parent)
         try:
             self.url_entry.focus_set()
         except tk.TclError:

@@ -6,6 +6,8 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Optional
 
+from ui import scaling
+from ui.theme import get_theme
 from utils.time_utils import build_custom_iso, is_future, now_date_str, now_time_str
 
 
@@ -21,61 +23,61 @@ class CommitDialog(tk.Toplevel):
         self.date_mode: str = "current"
         self.custom_iso: Optional[str] = None
 
-        dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
-        self.configure(bg=dialog_bg)
+        colors = get_theme(theme_mode)
+        self.configure(bg=colors["frame_bg"])
 
         self.transient(parent)
         self.grab_set()
 
-        ttk.Label(self, text="Commit message:", font=("Helvetica", 10, "bold"), style="Dialog.TLabel")
-        self.message_text = tk.Text(self, width=70, height=8, wrap=tk.WORD, font=("Helvetica", 10), bg="#1e2228" if theme_mode == "dark" else "#ffffff", fg="#e8e8e8" if theme_mode == "dark" else "#000000", insertbackground="#e8e8e8" if theme_mode == "dark" else "#000000")
-        self.message_text.pack(padx=20, pady=(4, 10), fill=tk.BOTH)
+        ttk.Label(self, text="Commit message:", font=("Helvetica", 10, "bold"), style="Dialog.TLabel").pack(
+            anchor=tk.W, padx=scaling.px(20), pady=(scaling.px(16), 0)
+        )
+        self.message_text = tk.Text(self, width=64, height=8, wrap=tk.WORD, font=("Helvetica", 10), bg=colors["text_bg"], fg=colors["fg"], insertbackground=colors["fg"])
+        self.message_text.pack(padx=scaling.px(20), pady=(scaling.px(4), scaling.px(10)), fill=tk.BOTH)
 
         self.add_mode = tk.StringVar(value="all")
-        add_frame = ttk.LabelFrame(self, text="Add scope", padding=10, style="Dialog.TLabelframe")
-        add_frame.pack(fill=tk.X, padx=20, pady=(0, 10))
+        add_frame = ttk.LabelFrame(self, text="Add scope", padding=scaling.px(10), style="Dialog.TLabelframe")
+        add_frame.pack(fill=tk.X, padx=scaling.px(20), pady=(0, scaling.px(10)))
 
-        ttk.Radiobutton(add_frame, text="All changes (tracked + untracked)", variable=self.add_mode, value="all").pack(anchor=tk.W, pady=2)
-        ttk.Radiobutton(add_frame, text="Tracked changes only", variable=self.add_mode, value="tracked").pack(anchor=tk.W, pady=2)
+        ttk.Radiobutton(add_frame, text="All changes (tracked + untracked)", variable=self.add_mode, value="all").pack(anchor=tk.W, pady=scaling.px(2))
+        ttk.Radiobutton(add_frame, text="Tracked changes only", variable=self.add_mode, value="tracked").pack(anchor=tk.W, pady=scaling.px(2))
 
         specific_frame = ttk.Frame(add_frame, style="Dialog.TFrame")
-        specific_frame.pack(fill=tk.X, pady=(8, 0))
+        specific_frame.pack(fill=tk.X, pady=(scaling.px(8), 0))
         ttk.Radiobutton(specific_frame, text="Specific paths:", variable=self.add_mode, value="paths").pack(side=tk.LEFT, anchor=tk.N)
         self.pathspec_var = tk.StringVar()
         self.pathspec_entry = ttk.Entry(specific_frame, textvariable=self.pathspec_var, width=48, style="Dialog.TEntry")
-        self.pathspec_entry.pack(side=tk.LEFT, padx=8, fill=tk.X, expand=True)
+        self.pathspec_entry.pack(side=tk.LEFT, padx=scaling.px(8), fill=tk.X, expand=True)
 
         # Date/time selection
-        date_frame = ttk.LabelFrame(self, text="Commit date/time", padding=10, style="Dialog.TLabelframe")
-        date_frame.pack(fill=tk.X, padx=20, pady=(0, 10))
+        date_frame = ttk.LabelFrame(self, text="Commit date/time", padding=scaling.px(10), style="Dialog.TLabelframe")
+        date_frame.pack(fill=tk.X, padx=scaling.px(20), pady=(0, scaling.px(10)))
         self.date_mode_var = tk.StringVar(value="current")
-        ttk.Radiobutton(date_frame, text="Current date and time", variable=self.date_mode_var, value="current", command=self._on_date_mode_change).pack(anchor=tk.W, pady=2)
-        ttk.Radiobutton(date_frame, text="Custom date and time", variable=self.date_mode_var, value="custom", command=self._on_date_mode_change).pack(anchor=tk.W, pady=2)
+        ttk.Radiobutton(date_frame, text="Current date and time", variable=self.date_mode_var, value="current", command=self._on_date_mode_change).pack(anchor=tk.W, pady=scaling.px(2))
+        ttk.Radiobutton(date_frame, text="Custom date and time", variable=self.date_mode_var, value="custom", command=self._on_date_mode_change).pack(anchor=tk.W, pady=scaling.px(2))
         custom_row = ttk.Frame(date_frame, style="Dialog.TFrame")
-        custom_row.pack(fill=tk.X, pady=(6, 0))
+        custom_row.pack(fill=tk.X, pady=(scaling.px(6), 0))
         self.custom_date_var = tk.StringVar(value=now_date_str())
         self.custom_time_var = tk.StringVar(value=now_time_str())
         ttk.Label(custom_row, text="Date:", style="Dialog.TLabel").pack(side=tk.LEFT)
         self.custom_date_entry = ttk.Entry(custom_row, textvariable=self.custom_date_var, width=14, style="Dialog.TEntry")
-        self.custom_date_entry.pack(side=tk.LEFT, padx=(4, 12))
+        self.custom_date_entry.pack(side=tk.LEFT, padx=(scaling.px(4), scaling.px(12)))
         ttk.Label(custom_row, text="Time:", style="Dialog.TLabel").pack(side=tk.LEFT)
         self.custom_time_entry = ttk.Entry(custom_row, textvariable=self.custom_time_var, width=12, style="Dialog.TEntry")
-        self.custom_time_entry.pack(side=tk.LEFT, padx=(4, 0))
-        ttk.Label(date_frame, text="Format: YYYY-MM-DD and HH:MM:SS", font=("Helvetica", 8, "italic"), style="Dialog.TLabel").pack(anchor=tk.W, pady=(4, 0))
+        self.custom_time_entry.pack(side=tk.LEFT, padx=(scaling.px(4), 0))
+        ttk.Label(date_frame, text="Format: YYYY-MM-DD and HH:MM:SS", font=("Helvetica", 8, "italic"), style="Dialog.TLabel").pack(anchor=tk.W, pady=(scaling.px(4), 0))
         self._set_custom_state(tk.DISABLED)
 
         button_frame = ttk.Frame(self, style="Dialog.TFrame")
-        button_frame.pack(pady=10)
-        ttk.Button(button_frame, text="Commit", command=self._on_ok, style="Dialog.TButton", width=12).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=self._on_cancel, style="Dialog.TButton", width=12).pack(side=tk.LEFT, padx=5)
+        button_frame.pack(pady=scaling.px(10))
+        ttk.Button(button_frame, text="Commit", command=self._on_ok, style="DialogPrimary.TButton", width=12).pack(side=tk.LEFT, padx=scaling.px(5))
+        ttk.Button(button_frame, text="Cancel", command=self._on_cancel, style="Dialog.TButton", width=12).pack(side=tk.LEFT, padx=scaling.px(5))
 
         self.bind("<Return>", lambda e: self._on_ok())
         self.bind("<Escape>", lambda e: self._on_cancel())
 
-        self.update_idletasks()
-        x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_width() // 2)
-        y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.winfo_height() // 2)
-        self.geometry(f"+{x}+{y}")
+        scaling.fit_window(self, 600, 620, min_width=500, min_height=460)
+        scaling.center_on_parent(self, parent)
         try:
             self.message_text.focus_set()
         except tk.TclError:

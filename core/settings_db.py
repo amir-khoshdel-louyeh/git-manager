@@ -273,6 +273,22 @@ class SettingsDB:
         """Save PanedWindow sash position."""
         self.set("paned_sash_pos", str(int(pos)))
 
+    def get_ui_scale(self) -> float:
+        """Return the UI scale factor used when layout was last saved."""
+        try:
+            value = float(self.settings.get("ui_scale", 1.0))
+        except (ValueError, TypeError):
+            return 1.0
+        return min(3.0, max(0.5, value))
+
+    def set_ui_scale(self, value: float) -> None:
+        """Remember the UI scale factor so pixel layouts survive DPI changes."""
+        try:
+            value = min(3.0, max(0.5, float(value)))
+        except (ValueError, TypeError):
+            value = 1.0
+        self.set("ui_scale", str(round(value, 3)))
+
     def get_tree_column_widths(self) -> Optional[Dict[str, int]]:
         """Return saved Treeview column widths as {column: width}."""
         raw = self.settings.get("tree_column_widths")

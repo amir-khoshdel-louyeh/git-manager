@@ -6,6 +6,10 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Optional
 
+from ui import scaling
+from ui.theme import get_theme
+from ui.widgets import ScrollableFrame
+
 
 class SettingsDialog(tk.Toplevel):
     """Dialog for changing application settings."""
@@ -35,14 +39,24 @@ class SettingsDialog(tk.Toplevel):
         self.theme_mode = theme_mode
         self.repos_changed = False
 
-        dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
-        self.configure(bg=dialog_bg)
+        colors = get_theme(theme_mode)
+        self.configure(bg=colors["frame_bg"])
 
         self.transient(parent)
         self.grab_set()
 
-        repo_frame = ttk.LabelFrame(self, text="Repository settings", style="Dialog.TLabelframe")
-        repo_frame.pack(fill=tk.X, padx=20, pady=(16, 8))
+        # The settings list is taller than small laptop screens; keep the
+        # content scrollable and pin the Save/Cancel buttons to the bottom.
+        self.body = ScrollableFrame(
+            self,
+            style="Dialog.TFrame",
+            background=colors["frame_bg"],
+        )
+        self.body.pack(fill=tk.BOTH, expand=True, padx=scaling.px(6), pady=(scaling.px(6), 0))
+        content = self.body.inner
+
+        repo_frame = ttk.LabelFrame(content, text="Repository settings", style="Dialog.TLabelframe")
+        repo_frame.pack(fill=tk.X, padx=scaling.px(16), pady=(scaling.px(10), scaling.px(8)))
         self.base_var = tk.StringVar(value=base_directory)
         entry_frame = ttk.Frame(repo_frame)
         entry_frame.pack(fill=tk.X, padx=12, pady=12)
@@ -50,13 +64,13 @@ class SettingsDialog(tk.Toplevel):
         self.base_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(entry_frame, text="Browse", command=self._browse_base_dir, style="Dialog.TButton").pack(side=tk.LEFT, padx=(8, 0))
 
-        startup_frame = ttk.LabelFrame(self, text="Startup behavior", style="Dialog.TLabelframe")
-        startup_frame.pack(fill=tk.X, padx=20, pady=8)
+        startup_frame = ttk.LabelFrame(content, text="Startup behavior", style="Dialog.TLabelframe")
+        startup_frame.pack(fill=tk.X, padx=scaling.px(16), pady=scaling.px(8))
         self.auto_switch_var = tk.BooleanVar(value=auto_switch)
         ttk.Checkbutton(startup_frame, text="Auto switch to local_commit on startup", variable=self.auto_switch_var, style="Dialog.TCheckbutton").pack(anchor=tk.W, padx=12, pady=12)
 
-        refresh_frame = ttk.LabelFrame(self, text="Refresh settings", style="Dialog.TLabelframe")
-        refresh_frame.pack(fill=tk.X, padx=20, pady=8)
+        refresh_frame = ttk.LabelFrame(content, text="Refresh settings", style="Dialog.TLabelframe")
+        refresh_frame.pack(fill=tk.X, padx=scaling.px(16), pady=scaling.px(8))
         self.auto_refresh_var = tk.BooleanVar(value=auto_refresh)
         ttk.Checkbutton(refresh_frame, text="Auto refresh repositories", variable=self.auto_refresh_var, style="Dialog.TCheckbutton").pack(anchor=tk.W, padx=12, pady=(12, 8))
 
@@ -67,16 +81,16 @@ class SettingsDialog(tk.Toplevel):
         ttk.Entry(interval_frame, textvariable=self.refresh_interval_var, width=6, style="Dialog.TEntry").pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(interval_frame, text="minute(s)", font=("Helvetica", 10), style="Dialog.TLabel").pack(side=tk.LEFT, padx=(8, 0))
 
-        appearance_frame = ttk.LabelFrame(self, text="Appearance", style="Dialog.TLabelframe")
-        appearance_frame.pack(fill=tk.X, padx=20, pady=8)
+        appearance_frame = ttk.LabelFrame(content, text="Appearance", style="Dialog.TLabelframe")
+        appearance_frame.pack(fill=tk.X, padx=scaling.px(16), pady=scaling.px(8))
         self.theme_mode = tk.StringVar(value=theme_mode)
         theme_frame = ttk.Frame(appearance_frame, style="Dialog.TFrame")
         theme_frame.pack(fill=tk.X, padx=12, pady=12)
         ttk.Radiobutton(theme_frame, text="Light", variable=self.theme_mode, value="light", style="Dialog.TRadiobutton").pack(side=tk.LEFT, padx=4)
         ttk.Radiobutton(theme_frame, text="Dark", variable=self.theme_mode, value="dark", style="Dialog.TRadiobutton").pack(side=tk.LEFT, padx=4)
 
-        zoom_frame = ttk.LabelFrame(self, text="Zoom", style="Dialog.TLabelframe")
-        zoom_frame.pack(fill=tk.X, padx=20, pady=8)
+        zoom_frame = ttk.LabelFrame(content, text="Zoom", style="Dialog.TLabelframe")
+        zoom_frame.pack(fill=tk.X, padx=scaling.px(16), pady=scaling.px(8))
         self.output_font_size_var = tk.StringVar(value=str(output_font_size))
         self.table_font_size_var = tk.StringVar(value=str(table_font_size))
         self.button_font_size_var = tk.StringVar(value=str(button_font_size))
@@ -123,8 +137,8 @@ class SettingsDialog(tk.Toplevel):
             style="Dialog.TSpinbox",
         ).pack(side=tk.RIGHT)
 
-        working_frame = ttk.LabelFrame(self, text="Working hours", style="Dialog.TLabelframe")
-        working_frame.pack(fill=tk.X, padx=20, pady=8)
+        working_frame = ttk.LabelFrame(content, text="Working hours", style="Dialog.TLabelframe")
+        working_frame.pack(fill=tk.X, padx=scaling.px(16), pady=scaling.px(8))
         self.work_start_var = tk.StringVar(value=work_start_hour)
         self.work_end_var = tk.StringVar(value=work_end_hour)
 
@@ -135,8 +149,8 @@ class SettingsDialog(tk.Toplevel):
         ttk.Label(working_row, text="To (HH:MM):", font=("Helvetica", 10), style="Dialog.TLabel").pack(side=tk.LEFT, padx=(16, 0))
         ttk.Entry(working_row, textvariable=self.work_end_var, width=8, style="Dialog.TEntry", justify=tk.CENTER).pack(side=tk.LEFT, padx=(8, 0))
 
-        distrib_frame = ttk.LabelFrame(self, text="Daily distribution (date range mode)", style="Dialog.TLabelframe")
-        distrib_frame.pack(fill=tk.X, padx=20, pady=8)
+        distrib_frame = ttk.LabelFrame(content, text="Daily distribution (date range mode)", style="Dialog.TLabelframe")
+        distrib_frame.pack(fill=tk.X, padx=scaling.px(16), pady=scaling.px(8))
         self.min_per_day_var = tk.StringVar(value=str(min_commits_per_day))
         self.max_per_day_var = tk.StringVar(value=str(max_commits_per_day))
         self.busy_workdays_var = tk.BooleanVar(value=busy_workdays)
@@ -155,8 +169,8 @@ class SettingsDialog(tk.Toplevel):
             style="Dialog.TCheckbutton",
         ).pack(anchor=tk.W, padx=12, pady=(4, 12))
 
-        new_repo_frame = ttk.LabelFrame(self, text="New repositories", style="Dialog.TLabelframe")
-        new_repo_frame.pack(fill=tk.X, padx=20, pady=8)
+        new_repo_frame = ttk.LabelFrame(content, text="New repositories", style="Dialog.TLabelframe")
+        new_repo_frame.pack(fill=tk.X, padx=scaling.px(16), pady=scaling.px(8))
         self.default_branch_var = tk.StringVar(value=default_base_branch or "main")
         new_repo_row = ttk.Frame(new_repo_frame, style="Dialog.TFrame")
         new_repo_row.pack(fill=tk.X, padx=12, pady=12)
@@ -168,7 +182,7 @@ class SettingsDialog(tk.Toplevel):
             text="Clone from URL or set up repos you added manually (suggestions open in a separate window).",
             font=("Helvetica", 8, "italic"),
             style="Dialog.TLabel",
-            wraplength=420,
+            wraplength=scaling.px(420),
         ).pack(anchor=tk.W, padx=12, pady=(0, 12))
 
         button_frame = ttk.Frame(self, style="Dialog.TFrame")
@@ -179,10 +193,8 @@ class SettingsDialog(tk.Toplevel):
         self.bind("<Return>", lambda e: self._on_ok())
         self.bind("<Escape>", lambda e: self._on_cancel())
 
-        self.update_idletasks()
-        x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_width() // 2)
-        y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.winfo_height() // 2)
-        self.geometry(f"+{x}+{y}")
+        scaling.fit_window(self, 620, 800, min_width=520, min_height=420)
+        scaling.center_on_parent(self, parent)
         try:
             self.base_entry.focus_set()
         except tk.TclError:

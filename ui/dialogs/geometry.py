@@ -1,42 +1,25 @@
-"""Remember dialog sizes/positions across runs (stored in SettingsDB)."""
+"""Remember dialog sizes/positions across runs (stored in SettingsDB).
+
+Saved pixel sizes are adapted to the current display with
+:func:`ui.scaling.rescale_geometry`, so a dialog last used on a 24" monitor
+opens fully visible on a 13" laptop (and vice versa).
+"""
 
 from __future__ import annotations
 
-import re
 import tkinter as tk
 
-_GEO_RE = re.compile(r"^(\d+)x(\d+)([+-]\d+)([+-]\d+)$")
+from ui import scaling
 
 
 def parse_geometry(geom: str) -> tuple[int, int, int, int] | None:
     """Parse 'WxH+X+Y' into (w, h, x, y), or None when malformed."""
-    if not geom:
-        return None
-    match = _GEO_RE.match(geom.strip())
-    if not match:
-        return None
-    return int(match.group(1)), int(match.group(2)), int(match.group(3)), int(match.group(4))
+    return scaling.parse_geometry(geom)
 
 
 def fits_screen(window: tk.Misc, geom: str) -> str | None:
-    """Return a clamped 'WxH+X+Y' if the size fits the screen, else None."""
-    parsed = parse_geometry(geom)
-    if parsed is None:
-        return None
-    w, h, x, y = parsed
-    try:
-        screen_w = window.winfo_screenwidth()
-        screen_h = window.winfo_screenheight()
-    except tk.TclError:
-        return None
-    if w <= 0 or h <= 0 or w > screen_w or h > screen_h:
-        return None
-    # Clamp position so the window stays reachable.
-    x = max(0, min(x, screen_w - min(w, 100)))
-    y = max(0, min(y, screen_h - min(h, 100)))
-    sign_x = "+" if x >= 0 else ""
-    sign_y = "+" if y >= 0 else ""
-    return f"{w}x{h}{sign_x}{x}{sign_y}{y}"
+    """Return a clamped, scaled 'WxH+X+Y' for this display, or None."""
+    return scaling.rescale_geometry(window, geom)
 
 
 def enable_geometry_memory(window: tk.Toplevel, db, name: str, delay_ms: int = 600) -> None:
@@ -50,17 +33,15 @@ def enable_geometry_memory(window: tk.Toplevel, db, name: str, delay_ms: int = 6
         return
     try:
         saved = db.get_dialog_geometry(name)
+        saved_scale = db.get_ui_scale()
     except Exception:
         saved = None
+        saved_scale = None
     if saved:
-        try:
-            window.update_idletasks()
-            clamped = fits_screen(window, saved)
-        except tk.TclError:
-            clamped = None
-        if clamped:
+        fitted = scaling.rescale_geometry(window, saved, saved_scale)
+        if fitted:
             try:
-                window.geometry(clamped)
+                window.geometry(fitted)
             except tk.TclError:
                 pass
 
@@ -87,7 +68,7 @@ def enable_geometry_memory(window: tk.Toplevel, db, name: str, delay_ms: int = 6
             geom = window.geometry()
         except tk.TclError:
             return
-        if parse_geometry(geom) is None:
+        if scaling.parse_geometry(geom) is None:
             return
         try:
             db.set_dialog_geometry(name, geom)

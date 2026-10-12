@@ -14,6 +14,8 @@ from core.contributions import (
     build_grid,
     collect_counts,
 )
+from ui import scaling
+from ui.theme import get_theme
 
 _CELL = 14
 _GAP = 4
@@ -63,15 +65,16 @@ class ContributionsDialog(tk.Toplevel):
             self.zoom = 2.0
         self._columns: list = []
 
-        dialog_bg = "#1f242a" if theme_mode == "dark" else "#f0f0f0"
-        self.configure(bg=dialog_bg)
+        colors = get_theme(theme_mode)
+        px = scaling.px
+        self.configure(bg=colors["frame_bg"])
         self.transient(parent)
         self.grab_set()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # ---------- filters ----------
         filters = ttk.Frame(self, style="Dialog.TFrame")
-        filters.pack(fill=tk.X, padx=16, pady=(14, 4))
+        filters.pack(fill=tk.X, padx=px(16), pady=(px(14), px(4)))
         ttk.Label(filters, text="Repo:", style="Dialog.TLabel").pack(side=tk.LEFT)
         names = ["All repositories"] + sorted(self.repo_map)
         self.repo_var = tk.StringVar(value=names[0])
@@ -92,19 +95,19 @@ class ContributionsDialog(tk.Toplevel):
         # ---------- total ----------
         self.total_var = tk.StringVar(value="")
         ttk.Label(self, textvariable=self.total_var, font=("Helvetica", 11, "bold"), style="Dialog.TLabel").pack(
-            anchor=tk.W, padx=16, pady=(6, 2)
+            anchor=tk.W, padx=px(16), pady=(px(6), px(2))
         )
 
         # ---------- graph canvas ----------
         canvas_frame = ttk.Frame(self, style="Dialog.TFrame")
-        canvas_frame.pack(fill=tk.BOTH, expand=True, padx=16)
+        canvas_frame.pack(fill=tk.BOTH, expand=True, padx=px(16))
         canvas_frame.columnconfigure(0, weight=1)
         canvas_frame.rowconfigure(0, weight=1)
         self.canvas = tk.Canvas(
             canvas_frame,
-            bg="#ffffff" if theme_mode == "light" else "#0d1117",
+            bg=colors["canvas_bg"],
             highlightthickness=1,
-            highlightbackground="#d0d7de" if theme_mode == "light" else "#30363d",
+            highlightbackground=colors["border"],
         )
         self.vbar = ttk.Scrollbar(canvas_frame, orient=tk.VERTICAL, command=self.canvas.yview)
         self.hbar = ttk.Scrollbar(canvas_frame, orient=tk.HORIZONTAL, command=self.canvas.xview)
@@ -127,7 +130,7 @@ class ContributionsDialog(tk.Toplevel):
 
         # ---------- legend + status ----------
         bottom = ttk.Frame(self, style="Dialog.TFrame")
-        bottom.pack(fill=tk.X, padx=16, pady=(4, 6))
+        bottom.pack(fill=tk.X, padx=px(16), pady=(px(4), px(6)))
         self.status_var = tk.StringVar(value="")
         ttk.Label(bottom, textvariable=self.status_var, font=("Helvetica", 9, "italic"), style="Dialog.TLabel").pack(
             side=tk.LEFT
@@ -147,15 +150,12 @@ class ContributionsDialog(tk.Toplevel):
         ttk.Button(legend, text="+", width=3, command=lambda: self._zoom_by(1.25), style="Dialog.TButton").pack(side=tk.LEFT)
 
         buttons = ttk.Frame(self, style="Dialog.TFrame")
-        buttons.pack(pady=(4, 14))
+        buttons.pack(pady=(px(4), px(14)))
         ttk.Button(buttons, text="Close", command=self._on_close, style="Dialog.TButton", width=12).pack()
         self.bind("<Escape>", lambda e: self._on_close())
 
         self._reload()
-        self.update_idletasks()
-        x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_width() // 2)
-        y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.winfo_height() // 2)
-        self.geometry(f"+{x}+{y}")
+        scaling.center_on_parent(self, parent)
 
     # ------------------------------------------------------------------ data
     def _selected_paths(self) -> list[Path]:
@@ -173,25 +173,50 @@ class ContributionsDialog(tk.Toplevel):
         counts = collect_counts(paths, author_email=author)
         self._columns = build_grid(counts)
         total = sum(counts.values())
-        self.total_var.set(f"{total} contributions in the last year ({len(paths)} repo(s))")
-        self._draw()
+        self.total_var.set(f"{total} contributions{self._span_label(counts)} ({len(paths)} repo(s))")
+        self._draw(scroll_to_end=True)
         self._set_status_default()
+
+    def _span_label(self, counts: dict[str, int]) -> str:
+        """Describe the covered period (all years on record, not just one)."""
+        days: list[date] = []
+        for key in counts:
+            try:
+                days.append(date.fromisoformat(key))
+            except (TypeError, ValueError):
+                continue
+        if not days:
+            return ""
+        first, last = min(days), max(days)
+        if first.year == last.year:
+            return f" in {first.year}"
+        if last.year - first.year == 1:
+            return f" in {first.year}–{last.year}"
+        return f" from {first.year} to {last.year}"
 
     # ------------------------------------------------------------------ zoom
     def _metrics(self) -> dict:
-        """Scaled geometry for the current zoom (uniform scale => ratio kept)."""
-        z = self.zoom
+        """Scaled geometry for the current zoom (uniform scale => ratio kept).
+
+        Cell metrics are logical pixels, so they follow the display scale;
+        the font is in points and follows ``tk scaling`` on its own.
+        """
+        z = self.zoom * scaling.scale()
+        table_pad = scaling.px(_TABLE_PAD)
         cell = max(2, round(_CELL * z))
         gap = max(1, round(_GAP * z))
         return {
             "cell": cell,
             "gap": gap,
             "step": cell + gap,
-            "left": round(_LEFT_PAD * z) + _TABLE_PAD,
-            "top": round(_TOP_PAD * z) + _TABLE_PAD,
-            "pad": round(8 * z) + _TABLE_PAD,
-            "font": max(8, round(9 * z)),
+            "left": round(_LEFT_PAD * z) + table_pad,
+            "top": round(_TOP_PAD * z) + table_pad,
+            "pad": round(8 * z) + table_pad,
+            "font": max(8, round(9 * self.zoom)),
             "outline": max(2, round(z)),
+            "label_offset": round(6 * z),
+            "year_offset": round(14 * z),
+            "highlight_pad": max(1, round(z / 2)),
         }
 
     def _zoom_by(self, factor: float) -> None:
@@ -216,7 +241,7 @@ class ContributionsDialog(tk.Toplevel):
         return "break"
 
     # ------------------------------------------------------------------ draw
-    def _draw(self) -> None:
+    def _draw(self, scroll_to_end: bool = False) -> None:
         columns = self._columns
         m = self._m
         cell, step, left, top = m["cell"], m["step"], m["left"], m["top"]
@@ -226,10 +251,12 @@ class ContributionsDialog(tk.Toplevel):
         colors = COLORS_DARK if dark else COLORS_LIGHT
         label_fg = "#8b949e" if dark else "#57606a"
         label_font = ("Helvetica", m["font"])
+        year_font = ("Helvetica", m["font"], "bold")
         month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
         last_month_col = -10
+        last_year: Optional[int] = None
         outline = "#e3b341" if dark else "#bf8700"
-        pad = max(1, round(self.zoom / 2))
+        pad = m["highlight_pad"]
         for col_idx, column in enumerate(columns):
             col_meta: list[dict] = []
             for row_idx, cell_obj in enumerate(column):
@@ -252,20 +279,33 @@ class ContributionsDialog(tk.Toplevel):
                 if col_idx == 0 and row_idx in (1, 3, 5):
                     names = {1: "Mon", 3: "Wed", 5: "Fri"}
                     self.canvas.create_text(
-                        left - round(6 * self.zoom), y0 + cell / 2, text=names[row_idx],
+                        left - m["label_offset"], y0 + cell / 2, text=names[row_idx],
                         anchor="e", font=label_font, fill=label_fg,
                     )
-            # Month label when the month changes (skip crowded ones).
             first_day = column[0].day
-            if first_day.day <= 7 and col_idx - last_month_col >= 3:
+            drew_year = False
+            # Year marker wherever the table crosses into a new year, so a
+            # multi-year history stays readable while scrolling.
+            if first_day.year != last_year:
                 self.canvas.create_text(
-                    left + col_idx * step, top - round(6 * self.zoom),
+                    left + col_idx * step,
+                    top - m["label_offset"] - m["year_offset"],
+                    text=str(first_day.year),
+                    anchor="sw", font=year_font, fill=label_fg,
+                )
+                last_year = first_day.year
+                last_month_col = -10
+                drew_year = True
+            # Month label when the month changes (skip crowded ones).
+            if not drew_year and first_day.day <= 7 and col_idx - last_month_col >= 3:
+                self.canvas.create_text(
+                    left + col_idx * step, top - m["label_offset"],
                     text=month_names[first_day.month - 1],
                     anchor="sw", font=label_font, fill=label_fg,
                 )
                 last_month_col = col_idx
             self._cells.append(col_meta)
-        graph_w = left + 53 * step + m["pad"]
+        graph_w = left + max(1, len(columns)) * step + m["pad"]
         graph_h = top + 7 * step + m["pad"]
         self.canvas.configure(scrollregion=(0, 0, graph_w, graph_h))
         # Cap the viewport so huge zooms stay usable; scrollbars take over.
@@ -282,6 +322,13 @@ class ContributionsDialog(tk.Toplevel):
             self.geometry("")
         except tk.TclError:
             pass
+        # Long histories open on the most recent weeks, not the oldest.
+        if scroll_to_end:
+            try:
+                self.update_idletasks()
+                self.canvas.xview_moveto(1.0)
+            except tk.TclError:
+                pass
 
     # ------------------------------------------------------------------ hover
     def _on_hover(self, event: tk.Event) -> None:

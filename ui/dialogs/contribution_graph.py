@@ -5,10 +5,9 @@ planned days, hover details), but packed as a plain frame so it can live
 inside other dialogs — e.g. at the bottom of Move Commits. The big
 Contributions dialog is intentionally left untouched.
 
-The table size is LOCKED to its content: the canvas is always exactly as
-big as the drawn table needs (no viewport caps, no scrollbars, no
-stretching with the window). Zooming redraws and re-locks to the new
-exact content size.
+The table is drawn at its zoomed size, while the viewport is capped to the
+dialog/screen and gets scrollbars, so the same widget stays usable on a 13"
+laptop and a 24" monitor. Zooming redraws the table at the new size.
 """
 
 from __future__ import annotations
@@ -20,6 +19,7 @@ from tkinter import ttk
 from typing import Optional
 
 from core.contributions import COLORS_DARK, COLORS_LIGHT, build_grid, collect_counts
+from ui import scaling
 # Table geometry is shared with the Contributions dialog itself, so the
 # embedded table is pixel-identical at the same zoom (single source).
 from ui.dialogs.contributions_dialog import (
@@ -83,8 +83,8 @@ class ContributionGraph(ttk.Frame):
             side=tk.LEFT
         )
 
-        # Locked-size viewport: the frame only takes the space the canvas
-        # requests — it never stretches with the window (no fill/expand).
+        # The table keeps its native zoomed size but the viewport is capped to
+        # the dialog/screen; scrollbars keep every week reachable on laptops.
         canvas_frame = ttk.Frame(self, style="Dialog.TFrame")
         canvas_frame.pack(fill=tk.X)
         self.canvas = tk.Canvas(
@@ -93,11 +93,20 @@ class ContributionGraph(ttk.Frame):
             highlightthickness=1,
             highlightbackground="#d0d7de" if theme_mode == "light" else "#30363d",
         )
-        # No scrollbars: the canvas is always exactly content-sized, so
-        # there is nothing to scroll — everything shows fully and sharply.
-        self.canvas.pack(anchor=tk.CENTER)
+        self.vbar = ttk.Scrollbar(canvas_frame, orient=tk.VERTICAL, command=self.canvas.yview)
+        self.hbar = ttk.Scrollbar(canvas_frame, orient=tk.HORIZONTAL, command=self.canvas.xview)
+        self.canvas.configure(xscrollcommand=self.hbar.set, yscrollcommand=self.vbar.set)
+        canvas_frame.columnconfigure(0, weight=1)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.vbar.grid(row=0, column=1, sticky="ns")
+        self.hbar.grid(row=1, column=0, sticky="ew")
         self.canvas.bind("<Motion>", self._on_hover)
         self.canvas.bind("<Leave>", lambda e: self._set_status_default())
+        self.canvas.bind("<MouseWheel>", self._on_scroll_wheel)
+        self.canvas.bind("<Shift-MouseWheel>", self._on_shift_wheel)
+        self.canvas.bind("<Button-4>", lambda e: self._scroll_v(-1))
+        self.canvas.bind("<Button-5>", lambda e: self._scroll_v(1))
+        self.canvas.bind("<Control-MouseWheel>", self._on_zoom_wheel)
         self._set_status_default()
 
     # ------------------------------------------------------------------ data
@@ -127,25 +136,29 @@ class ContributionGraph(ttk.Frame):
             counts = {}
         self._columns = build_grid(counts)
         self.total = sum(counts.values())
-        self._draw()
+        self._draw(scroll_to_end=True)
         self._set_status_default()
         return self.total
 
     # ------------------------------------------------------------------ zoom
     def _metrics(self) -> dict:
         """Scaled geometry for the current zoom (same formula as the dialog)."""
-        z = self.zoom
+        z = self.zoom * scaling.scale()
+        table_pad = scaling.px(_TABLE_PAD)
         cell = max(2, round(_CELL * z))
         gap = max(1, round(_GAP * z))
         return {
             "cell": cell,
             "gap": gap,
             "step": cell + gap,
-            "left": round(_LEFT_PAD * z) + _TABLE_PAD,
-            "top": round(_TOP_PAD * z) + _TABLE_PAD,
-            "pad": round(8 * z) + _TABLE_PAD,
-            "font": max(8, round(9 * z)),
+            "left": round(_LEFT_PAD * z) + table_pad,
+            "top": round(_TOP_PAD * z) + table_pad,
+            "pad": round(8 * z) + table_pad,
+            "font": max(8, round(9 * self.zoom)),
             "outline": max(2, round(z)),
+            "label_offset": round(6 * z),
+            "year_offset": round(14 * z),
+            "highlight_pad": max(1, round(z / 2)),
         }
 
     def _zoom_by(self, factor: float) -> None:
@@ -154,7 +167,7 @@ class ContributionGraph(ttk.Frame):
         self._draw()
 
     # ------------------------------------------------------------------ draw
-    def _draw(self) -> None:
+    def _draw(self, scroll_to_end: bool = False) -> None:
         columns = self._columns
         m = self._m
         cell, step, left, top = m["cell"], m["step"], m["left"], m["top"]
@@ -164,10 +177,12 @@ class ContributionGraph(ttk.Frame):
         colors = COLORS_DARK if dark else COLORS_LIGHT
         label_fg = "#8b949e" if dark else "#57606a"
         label_font = ("Helvetica", m["font"])
+        year_font = ("Helvetica", m["font"], "bold")
         month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
         last_month_col = -10
+        last_year: Optional[int] = None
         outline = "#e3b341" if dark else "#bf8700"
-        pad = max(1, round(self.zoom / 2))
+        pad = m["highlight_pad"]
         shaded: list[tuple[int, int]] = []
         for col_idx, column in enumerate(columns):
             col_meta: list[dict] = []
@@ -196,13 +211,24 @@ class ContributionGraph(ttk.Frame):
                 if col_idx == 0 and row_idx in (1, 3, 5):
                     names = {1: "Mon", 3: "Wed", 5: "Fri"}
                     self.canvas.create_text(
-                        left - round(6 * self.zoom), y0 + cell / 2, text=names[row_idx],
+                        left - m["label_offset"], y0 + cell / 2, text=names[row_idx],
                         anchor="e", font=label_font, fill=label_fg,
                     )
             first_day = column[0].day
-            if first_day.day <= 7 and col_idx - last_month_col >= 3:
+            drew_year = False
+            if first_day.year != last_year:
                 self.canvas.create_text(
-                    left + col_idx * step, top - round(6 * self.zoom),
+                    left + col_idx * step,
+                    top - m["label_offset"] - m["year_offset"],
+                    text=str(first_day.year),
+                    anchor="sw", font=year_font, fill=label_fg,
+                )
+                last_year = first_day.year
+                last_month_col = -10
+                drew_year = True
+            if not drew_year and first_day.day <= 7 and col_idx - last_month_col >= 3:
+                self.canvas.create_text(
+                    left + col_idx * step, top - m["label_offset"],
                     text=month_names[first_day.month - 1],
                     anchor="sw", font=label_font, fill=label_fg,
                 )
@@ -214,13 +240,49 @@ class ContributionGraph(ttk.Frame):
                 x0, y0, x0 + cell, y0 + cell,
                 fill=_SHADE_FILL, outline="", stipple=_SHADE_STIPPLE,
             )
-        graph_w = left + 53 * step + m["pad"]
+        graph_w = left + max(1, len(columns)) * step + m["pad"]
         graph_h = top + 7 * step + m["pad"]
-        # LOCKED: canvas is exactly the table size — minimum required,
-        # no caps, no scrolling, no window-stretch.
         self.canvas.configure(scrollregion=(0, 0, graph_w, graph_h))
-        self.canvas.configure(width=graph_w, height=graph_h)
+        # Cap the visible viewport so the table never forces the dialog wider
+        # than the screen; the scrollbars expose the rest at any zoom.
+        try:
+            screen_w = int(self.winfo_screenwidth())
+            screen_h = int(self.winfo_screenheight())
+        except tk.TclError:
+            screen_w, screen_h = graph_w, graph_h
+        logical_w = screen_w / scaling.scale()
+        logical_h = screen_h / scaling.scale()
+        view_w = min(graph_w, scaling.px(min(860, max(420, int(logical_w * 0.55)))))
+        view_h = min(graph_h, scaling.px(min(260, max(110, int(logical_h * 0.13)))))
+        self.canvas.configure(width=view_w, height=view_h)
         self.zoom_var.set(f"{int(round(self.zoom * 100))}%")
+        # A long history opens on the newest weeks; scrollbars reach the rest.
+        if scroll_to_end:
+            try:
+                self.canvas.update_idletasks()
+                self.canvas.xview_moveto(1.0)
+            except tk.TclError:
+                pass
+
+    # ---------------------------------------------------------------- scroll
+    def _scroll_v(self, direction: int) -> str:
+        self.canvas.yview_scroll(direction, "units")
+        return "break"
+
+    def _on_scroll_wheel(self, event: tk.Event) -> str:
+        delta = getattr(event, "delta", 0)
+        self.canvas.yview_scroll(-1 if delta and delta > 0 else 1, "units")
+        return "break"
+
+    def _on_shift_wheel(self, event: tk.Event) -> str:
+        delta = getattr(event, "delta", 0)
+        self.canvas.xview_scroll(-1 if delta and delta > 0 else 1, "units")
+        return "break"
+
+    def _on_zoom_wheel(self, event: tk.Event) -> str:
+        delta = getattr(event, "delta", 0)
+        self._zoom_by(1.25 if delta and delta > 0 else 1 / 1.25)
+        return "break"
 
     # ------------------------------------------------------------------ hover
     def _on_hover(self, event: tk.Event) -> None:
@@ -248,10 +310,29 @@ class ContributionGraph(ttk.Frame):
                 return
         self._set_status_default()
 
+    def _range_text(self) -> str:
+        """Describe the years the table covers (full history)."""
+        if not self._columns:
+            return ""
+        first = next((c.day for c in self._columns[0] if c.in_range), None)
+        last = None
+        for column in reversed(self._columns):
+            last = next((c.day for c in reversed(column) if c.in_range), None)
+            if last is not None:
+                break
+        if first is None or last is None:
+            return ""
+        if first.year == last.year:
+            return f" in {first.year}"
+        if last.year - first.year == 1:
+            return f" in {first.year}–{last.year}"
+        return f" from {first.year} to {last.year}"
+
     def _set_status_default(self) -> None:
-        base = f"{self.total} contributions in the last year. Hover a day for details."
+        span = self._range_text()
+        base = f"{self.total} contributions{span}. Hover a day for details."
         if self.cutoff is not None:
-            base = f"{self.total} contributions in the last year. Shaded days are before the last commit."
+            base = f"{self.total} contributions{span}. Shaded days are before the last commit."
         if self.highlight:
             base += " Gold outline = planned."
         try:
